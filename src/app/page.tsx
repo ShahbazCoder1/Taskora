@@ -25,6 +25,7 @@ import {
 } from '@/lib/storage';
 import { soundEffects } from '@/lib/audio';
 import { checkTaskDeadlines, notifyTaskCompleted } from '@/lib/reminders';
+import { triggerTaskDoneConfetti } from '@/lib/confetti';
 import { usePWA } from '@/hooks/usePWA';
 import { syncManager } from '@/lib/sync';
 
@@ -145,6 +146,7 @@ export default function HomePage() {
           const isUnmarkedDone = taskData.status !== 'done' && t.status === 'done';
 
           if (isMarkedDone) {
+            triggerTaskDoneConfetti();
             if (settings.soundEnabled) soundEffects.playCompleteTask();
             notifyTaskCompleted(t.title);
             const updatedHist = recordTaskCompletion(t.id, true);
@@ -188,6 +190,7 @@ export default function HomePage() {
       };
 
       if (newTask.status === 'done') {
+        triggerTaskDoneConfetti();
         const updatedHist = recordTaskCompletion(newTask.id, true);
         setProductivityHistory(updatedHist);
         if (settings.soundEnabled) soundEffects.playCompleteTask();
@@ -219,6 +222,7 @@ export default function HomePage() {
     const isUnmarkedDone = newStatus !== 'done' && target.status === 'done';
 
     if (isMarkedDone) {
+      triggerTaskDoneConfetti();
       if (settings.soundEnabled) soundEffects.playCompleteTask();
       notifyTaskCompleted(target.title);
       const updatedHist = recordTaskCompletion(taskId, true);
