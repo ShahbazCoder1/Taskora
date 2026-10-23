@@ -251,7 +251,7 @@ export function SyncModal({ isOpen, onClose, initialPinFromUrl }: SyncModalProps
                   }`}
                 >
                   <QrCode className="w-3.5 h-3.5" />
-                  <span>Host (PIN & QR)</span>
+                  <span>Host</span>
                 </button>
 
                 <button

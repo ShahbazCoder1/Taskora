@@ -86,9 +86,12 @@ export default function HomePage() {
       setSyncStatus(newStatus);
     });
 
-    const unsubData = syncManager.onDataSync((newTasks, newHistory) => {
+    const unsubData = syncManager.onDataSync((newTasks, newHistory, newSettings) => {
       setTasks(newTasks);
       setProductivityHistory(newHistory);
+      if (newSettings) {
+        setSettings(newSettings);
+      }
       soundEffects.playPop();
     });
 
@@ -311,6 +314,7 @@ export default function HomePage() {
   const handleUpdateSettings = (newSettings: PomodoroSettings) => {
     setSettings(newSettings);
     savePomodoroSettings(newSettings);
+    syncManager.broadcastSettingsUpdate(newSettings);
   };
 
   const handleResetData = () => {

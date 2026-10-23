@@ -77,7 +77,8 @@ export type SyncMessageType =
   | 'FULL_SYNC'
   | 'TASK_UPSERT'
   | 'TASK_DELETE'
-  | 'TIMER_EVENT';
+  | 'TIMER_EVENT'
+  | 'SETTINGS_UPDATE';
 
 export interface TimerSyncPayload {
   action: 'start' | 'pause' | 'reset' | 'skip' | 'mode_change' | 'tick' | 'heartbeat';

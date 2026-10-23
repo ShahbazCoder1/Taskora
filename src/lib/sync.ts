@@ -44,7 +44,7 @@ export function generateRandomPin(): string {
 type MessageHandler = (message: SyncMessage) => void;
 type StatusHandler = (status: SyncConnectionStatus, device?: ConnectedDevice | null) => void;
 type TimerSyncHandler = (payload: TimerSyncPayload) => void;
-type DataSyncHandler = (tasks: Task[], history: DailyProductivityRecord[]) => void;
+type DataSyncHandler = (tasks: Task[], history: DailyProductivityRecord[], settings?: PomodoroSettings) => void;
 type PairingRequestHandler = (request: PairingRequestInfo | null) => void;
 
 const LOCAL_SESSION_ID = typeof window !== 'undefined'
@@ -82,7 +82,13 @@ class DeviceSyncManager {
           } else if (event.data?.type === 'TAB_DATA') {
             const tasks = getStoredTasks();
             const history = getProductivityHistory();
-            this.dataListeners.forEach((fn) => fn(tasks, history));
+            const settings = getPomodoroSettings();
+            this.dataListeners.forEach((fn) => fn(tasks, history, settings));
+          } else if (event.data?.type === 'TAB_SETTINGS') {
+            const tasks = getStoredTasks();
+            const history = getProductivityHistory();
+            const settings = getPomodoroSettings();
+            this.dataListeners.forEach((fn) => fn(tasks, history, settings));
           } else if (event.data?.type === 'TAB_PAIRING_REQUEST') {
             this.pendingPairingRequest = event.data.payload;
             this.pairingListeners.forEach((fn) => fn(this.pendingPairingRequest));
@@ -397,7 +403,7 @@ class DeviceSyncManager {
         }
 
         // Notify app components to re-render with merged data
-        this.dataListeners.forEach((fn) => fn(mergedTasks, mergedHistory));
+        this.dataListeners.forEach((fn) => fn(mergedTasks, mergedHistory, remoteSettings));
         this.broadcastTabMessage({ type: 'TAB_DATA' });
 
         // Synchronize active timer state if present
@@ -467,6 +473,18 @@ class DeviceSyncManager {
         this.currentTimerState = timerPayload;
         this.timerListeners.forEach((fn) => fn(timerPayload));
         this.broadcastTabMessage({ type: 'TAB_TIMER', payload: timerPayload });
+        break;
+      }
+
+      case 'SETTINGS_UPDATE': {
+        const settings: PomodoroSettings = msg.payload;
+        if (!settings) return;
+
+        savePomodoroSettings(settings);
+        const tasks = getStoredTasks();
+        const history = getProductivityHistory();
+        this.dataListeners.forEach((fn) => fn(tasks, history, settings));
+        this.broadcastTabMessage({ type: 'TAB_SETTINGS', payload: settings });
         break;
       }
     }
@@ -558,6 +576,19 @@ class DeviceSyncManager {
       payload,
     });
     this.broadcastTabMessage({ type: 'TAB_TIMER', payload });
+  }
+
+  // Broadcast Pomodoro settings update (durations, sound, etc.)
+  public broadcastSettingsUpdate(settings: PomodoroSettings) {
+    savePomodoroSettings(settings);
+    this.send({
+      type: 'SETTINGS_UPDATE',
+      senderId: this.peer?.id || '',
+      senderDevice: getDeviceName(),
+      timestamp: Date.now(),
+      payload: settings,
+    });
+    this.broadcastTabMessage({ type: 'TAB_SETTINGS', payload: settings });
   }
 
   // Host approves connection from client device (e.g. iPhone)

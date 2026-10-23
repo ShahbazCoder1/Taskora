@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { PomodoroSettings, SyncConnectionStatus } from '@/types';
 import { soundEffects } from '@/lib/audio';
 import { exportTaskoraData, importTaskoraData } from '@/lib/storage';
@@ -23,6 +23,10 @@ export function SettingsView({
 }: SettingsViewProps) {
   const [formData, setFormData] = useState<PomodoroSettings>(settings);
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    setFormData(settings);
+  }, [settings]);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
