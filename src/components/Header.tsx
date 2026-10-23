@@ -113,7 +113,7 @@ export function Header({
           {/* Device Sync Button */}
           <button
             onClick={onOpenSyncModal}
-            className={`relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold border transition ${
+            className={`relative flex items-center gap-1.5 px-2 py-1.5 sm:px-2.5 rounded-md text-xs font-semibold border transition ${
               syncStatus === 'connected'
                 ? 'bg-emerald-950/60 border-emerald-700/80 text-emerald-300'
                 : syncStatus === 'authorizing'
@@ -124,24 +124,32 @@ export function Header({
             }`}
             title="Local Wi-Fi Device Sync"
           >
-            {syncStatus === 'connected' ? (
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
-              </span>
-            ) : syncStatus === 'authorizing' ? (
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500" />
-              </span>
-            ) : syncStatus === 'connecting' ? (
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
-              </span>
-            ) : (
-              <Wifi className="w-3.5 h-3.5 text-slate-400" />
-            )}
+            <div className="relative flex items-center justify-center">
+              <Wifi className={`w-3.5 h-3.5 ${
+                syncStatus === 'connected' 
+                  ? 'text-emerald-400' 
+                  : syncStatus === 'authorizing' 
+                  ? 'text-indigo-400' 
+                  : syncStatus === 'connecting' 
+                  ? 'text-amber-400' 
+                  : 'text-slate-400'
+              }`} />
+              {syncStatus === 'connected' && (
+                <span className="absolute -top-1 -right-1 flex h-1.5 w-1.5">
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
+                </span>
+              )}
+              {syncStatus === 'authorizing' && (
+                <span className="absolute -top-1 -right-1 flex h-1.5 w-1.5">
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-indigo-400 animate-ping" />
+                </span>
+              )}
+              {syncStatus === 'connecting' && (
+                <span className="absolute -top-1 -right-1 flex h-1.5 w-1.5">
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-400 animate-ping" />
+                </span>
+              )}
+            </div>
             <span className="hidden sm:inline">
               {syncStatus === 'connected' ? 'Synced' : syncStatus === 'authorizing' ? 'Authorize' : syncStatus === 'connecting' ? 'Pairing...' : 'Sync'}
             </span>
