@@ -45,9 +45,10 @@ export function PomodoroTimer({
   const [sessionsCompletedToday, setSessionsCompletedToday] = useState<number>(0);
 
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const masterIdRef = useRef<string | null>(initialTimer?.masterId || null);
   const targetEndTimeRef = useRef<number | null>(
     initialTimer?.isRunning
-      ? initialTimer.targetEndTime || (initialTimer.timestamp + initialTimer.timeLeft * 1000)
+      ? Date.now() + (initialTimer.timeLeft * 1000)
       : null
   );
   const isRemoteUpdateRef = useRef<boolean>(false);
@@ -56,20 +57,38 @@ export function PomodoroTimer({
   useEffect(() => {
     const unsubscribe = syncManager.onTimerSync((payload) => {
       isRemoteUpdateRef.current = true;
+      if (payload.masterId) {
+        masterIdRef.current = payload.masterId;
+      }
       if (payload.mode) {
         setMode(payload.mode);
       }
 
-      let computedTimeLeft = payload.timeLeft;
-      if (payload.isRunning) {
-        if (payload.targetEndTime) {
-          targetEndTimeRef.current = payload.targetEndTime;
-          computedTimeLeft = Math.max(0, Math.ceil((payload.targetEndTime - Date.now()) / 1000));
-        } else if (payload.timestamp) {
-          const elapsed = Math.floor((Date.now() - payload.timestamp) / 1000);
-          computedTimeLeft = Math.max(0, payload.timeLeft - elapsed);
-          targetEndTimeRef.current = Date.now() + computedTimeLeft * 1000;
+      // If it's a heartbeat from master, smoothly reconcile any slight drift (>= 1s)
+      if (payload.action === 'heartbeat') {
+        if (payload.isRunning) {
+          setTimeLeft((prev) => {
+            const diff = Math.abs(prev - payload.timeLeft);
+            if (diff >= 1) {
+              // Anchor to this device's own Date.now() to eliminate device clock skew
+              targetEndTimeRef.current = Date.now() + payload.timeLeft * 1000;
+              return payload.timeLeft;
+            }
+            return prev;
+          });
         }
+        setTimeout(() => {
+          isRemoteUpdateRef.current = false;
+        }, 50);
+        return;
+      }
+
+      // For start, pause, reset, skip, mode_change:
+      const computedTimeLeft = payload.timeLeft;
+      if (payload.isRunning) {
+        // ALWAYS anchor targetEndTime to THIS device's own Date.now()!
+        // This eliminates 100% of clock skew between devices!
+        targetEndTimeRef.current = Date.now() + computedTimeLeft * 1000;
       } else {
         targetEndTimeRef.current = null;
       }
@@ -157,28 +176,33 @@ export function PomodoroTimer({
     }
   }, [isRunning, mode]);
 
-  // Periodic lockstep heartbeat while timer is running (every 10s)
+  // Periodic lockstep heartbeat while timer is running (every 3 seconds)
   useEffect(() => {
     if (!isRunning) return;
     const heartbeatInterval = setInterval(() => {
-      if (!isRemoteUpdateRef.current && targetEndTimeRef.current) {
+      const myId = syncManager.getSessionId();
+      // ONLY the active master device broadcasts heartbeats to prevent ping-pong loops
+      if (masterIdRef.current === myId && !isRemoteUpdateRef.current && targetEndTimeRef.current) {
         const remaining = Math.max(0, Math.ceil((targetEndTimeRef.current - Date.now()) / 1000));
         syncManager.broadcastTimerAction({
-          action: 'tick',
+          action: 'heartbeat',
           mode,
           timeLeft: remaining,
           isRunning: true,
           activeTaskId: activeTask?.id || null,
           timestamp: Date.now(),
-          targetEndTime: targetEndTimeRef.current,
+          targetEndTime: null,
+          masterId: myId,
         });
       }
-    }, 10000);
+    }, 3000);
 
     return () => clearInterval(heartbeatInterval);
   }, [isRunning, mode, activeTask]);
 
   const handleComplete = () => {
+    const myId = syncManager.getSessionId();
+    masterIdRef.current = myId;
     setIsRunning(false);
     targetEndTimeRef.current = null;
     if (timerRef.current) clearInterval(timerRef.current);
@@ -213,12 +237,16 @@ export function PomodoroTimer({
         activeTaskId: activeTask?.id || null,
         timestamp: Date.now(),
         targetEndTime: null,
+        masterId: myId,
       });
     }
   };
 
   const toggleTimer = () => {
     const nextRunning = !isRunning;
+    const myId = syncManager.getSessionId();
+    masterIdRef.current = myId;
+
     if (nextRunning) {
       targetEndTimeRef.current = Date.now() + timeLeft * 1000;
     } else {
@@ -233,12 +261,15 @@ export function PomodoroTimer({
         isRunning: nextRunning,
         activeTaskId: activeTask?.id || null,
         timestamp: Date.now(),
-        targetEndTime: targetEndTimeRef.current,
+        targetEndTime: null,
+        masterId: myId,
       });
     }
   };
 
   const resetTimer = () => {
+    const myId = syncManager.getSessionId();
+    masterIdRef.current = myId;
     setIsRunning(false);
     targetEndTimeRef.current = null;
     const duration = getDuration(mode);
@@ -252,11 +283,14 @@ export function PomodoroTimer({
         activeTaskId: activeTask?.id || null,
         timestamp: Date.now(),
         targetEndTime: null,
+        masterId: myId,
       });
     }
   };
 
   const skipTimer = () => {
+    const myId = syncManager.getSessionId();
+    masterIdRef.current = myId;
     setIsRunning(false);
     targetEndTimeRef.current = null;
     let nextMode: PomodoroMode;
@@ -279,11 +313,14 @@ export function PomodoroTimer({
         activeTaskId: activeTask?.id || null,
         timestamp: Date.now(),
         targetEndTime: null,
+        masterId: myId,
       });
     }
   };
 
   const switchMode = (newMode: PomodoroMode) => {
+    const myId = syncManager.getSessionId();
+    masterIdRef.current = myId;
     setMode(newMode);
     setIsRunning(false);
     targetEndTimeRef.current = null;
@@ -298,6 +335,7 @@ export function PomodoroTimer({
         activeTaskId: activeTask?.id || null,
         timestamp: Date.now(),
         targetEndTime: null,
+        masterId: myId,
       });
     }
   };

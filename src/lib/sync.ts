@@ -47,6 +47,14 @@ type TimerSyncHandler = (payload: TimerSyncPayload) => void;
 type DataSyncHandler = (tasks: Task[], history: DailyProductivityRecord[]) => void;
 type PairingRequestHandler = (request: PairingRequestInfo | null) => void;
 
+const LOCAL_SESSION_ID = typeof window !== 'undefined'
+  ? (window.sessionStorage.getItem('taskora_session_id') || (() => {
+      const id = 'sess_' + Math.random().toString(36).substring(2, 9);
+      try { window.sessionStorage.setItem('taskora_session_id', id); } catch {}
+      return id;
+    })())
+  : 'server';
+
 class DeviceSyncManager {
   private peer: any = null;
   private activeConn: any = null;
@@ -89,6 +97,10 @@ class DeviceSyncManager {
     }
   }
 
+  public getSessionId(): string {
+    return LOCAL_SESSION_ID;
+  }
+
   public getStatus(): SyncConnectionStatus {
     return this.status;
   }
@@ -111,14 +123,8 @@ class DeviceSyncManager {
 
   public getTimerState(): TimerSyncPayload | null {
     if (!this.currentTimerState) return null;
-    if (this.currentTimerState.isRunning) {
-      let remaining = this.currentTimerState.timeLeft;
-      if (this.currentTimerState.targetEndTime) {
-        remaining = Math.max(0, Math.ceil((this.currentTimerState.targetEndTime - Date.now()) / 1000));
-      } else if (this.currentTimerState.timestamp) {
-        const elapsed = Math.floor((Date.now() - this.currentTimerState.timestamp) / 1000);
-        remaining = Math.max(0, this.currentTimerState.timeLeft - elapsed);
-      }
+    if (this.currentTimerState.isRunning && this.currentTimerState.targetEndTime) {
+      const remaining = Math.max(0, Math.ceil((this.currentTimerState.targetEndTime - Date.now()) / 1000));
       return {
         ...this.currentTimerState,
         timeLeft: remaining,
@@ -398,13 +404,10 @@ class DeviceSyncManager {
         if (msg.payload?.timerState) {
           const remoteTimer: TimerSyncPayload = { ...msg.payload.timerState };
           if (remoteTimer.isRunning) {
-            if (remoteTimer.targetEndTime) {
-              remoteTimer.timeLeft = Math.max(0, Math.ceil((remoteTimer.targetEndTime - Date.now()) / 1000));
-            } else if (remoteTimer.timestamp) {
-              const elapsed = Math.floor((Date.now() - remoteTimer.timestamp) / 1000);
-              remoteTimer.timeLeft = Math.max(0, remoteTimer.timeLeft - elapsed);
-              remoteTimer.targetEndTime = Date.now() + remoteTimer.timeLeft * 1000;
-            }
+            // Anchor targetEndTime to receiver's own local clock to eliminate device clock skew
+            remoteTimer.targetEndTime = Date.now() + remoteTimer.timeLeft * 1000;
+          } else {
+            remoteTimer.targetEndTime = null;
           }
           this.currentTimerState = remoteTimer;
           this.timerListeners.forEach((fn) => fn(remoteTimer));
@@ -455,12 +458,10 @@ class DeviceSyncManager {
         if (!timerPayload) return;
 
         if (timerPayload.isRunning) {
-          if (!timerPayload.targetEndTime && timerPayload.timestamp) {
-            timerPayload.targetEndTime = timerPayload.timestamp + timerPayload.timeLeft * 1000;
-          }
-          if (timerPayload.targetEndTime) {
-            timerPayload.timeLeft = Math.max(0, Math.ceil((timerPayload.targetEndTime - Date.now()) / 1000));
-          }
+          // Anchor targetEndTime to receiver's own local clock to eliminate device clock skew
+          timerPayload.targetEndTime = Date.now() + timerPayload.timeLeft * 1000;
+        } else {
+          timerPayload.targetEndTime = null;
         }
 
         this.currentTimerState = timerPayload;

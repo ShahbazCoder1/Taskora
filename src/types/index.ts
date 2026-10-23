@@ -80,13 +80,14 @@ export type SyncMessageType =
   | 'TIMER_EVENT';
 
 export interface TimerSyncPayload {
-  action: 'start' | 'pause' | 'reset' | 'skip' | 'mode_change' | 'tick';
+  action: 'start' | 'pause' | 'reset' | 'skip' | 'mode_change' | 'tick' | 'heartbeat';
   mode: PomodoroMode;
   timeLeft: number;
   isRunning: boolean;
   activeTaskId?: string | null;
   timestamp: number;
   targetEndTime?: number | null;
+  masterId?: string | null;
 }
 
 export interface SyncMessage {
