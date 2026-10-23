@@ -21,6 +21,7 @@ export interface Task {
   estimatedPomodoros: number;
   completedPomodoros: number;
   createdAt: string;
+  updatedAt?: string;
   completedAt?: string | null;
   order: number;
 }
@@ -64,4 +65,37 @@ export interface TaskFilters {
   tag: string;
   sortBy: 'order' | 'dueDate' | 'priority' | 'createdAt';
   sortDirection: 'asc' | 'desc';
+}
+
+export type SyncConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+export type SyncMessageType =
+  | 'HANDSHAKE'
+  | 'FULL_SYNC'
+  | 'TASK_UPSERT'
+  | 'TASK_DELETE'
+  | 'TIMER_EVENT';
+
+export interface TimerSyncPayload {
+  action: 'start' | 'pause' | 'reset' | 'skip' | 'mode_change' | 'tick';
+  mode: PomodoroMode;
+  timeLeft: number;
+  isRunning: boolean;
+  activeTaskId?: string | null;
+  timestamp: number;
+}
+
+export interface SyncMessage {
+  type: SyncMessageType;
+  senderId: string;
+  senderDevice: string;
+  timestamp: number;
+  payload?: any;
+}
+
+export interface ConnectedDevice {
+  id: string;
+  name: string;
+  isHost: boolean;
+  connectedAt: number;
 }

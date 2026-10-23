@@ -5,6 +5,7 @@ import { Task, PomodoroMode, PomodoroSettings } from '@/types';
 import { Play, Pause, RotateCcw, SkipForward } from 'lucide-react';
 import { soundEffects } from '@/lib/audio';
 import { notifyPomodoroComplete } from '@/lib/reminders';
+import { syncManager } from '@/lib/sync';
 
 interface PomodoroTimerProps {
   settings: PomodoroSettings;
@@ -38,6 +39,32 @@ export function PomodoroTimer({
 
   const [timeLeft, setTimeLeft] = useState<number>(() => getDuration('work'));
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const isRemoteUpdateRef = useRef<boolean>(false);
+
+  // Subscribe to live timer synchronization from paired device
+  useEffect(() => {
+    const unsubscribe = syncManager.onTimerSync((payload) => {
+      isRemoteUpdateRef.current = true;
+      if (payload.mode && payload.mode !== mode) {
+        setMode(payload.mode);
+      }
+      if (typeof payload.timeLeft === 'number') {
+        setTimeLeft(payload.timeLeft);
+      }
+      setIsRunning(Boolean(payload.isRunning));
+
+      if (payload.activeTaskId !== undefined) {
+        const found = tasks.find((t) => t.id === payload.activeTaskId) || null;
+        onSelectActiveTask(found);
+      }
+
+      setTimeout(() => {
+        isRemoteUpdateRef.current = false;
+      }, 50);
+    });
+
+    return () => unsubscribe();
+  }, [mode, tasks, onSelectActiveTask]);
 
   useEffect(() => {
     if (!isRunning) {
@@ -72,32 +99,104 @@ export function PomodoroTimer({
     }
     notifyPomodoroComplete(mode, activeTask?.title);
 
+    let nextMode: PomodoroMode;
+    let nextDuration: number;
+
     if (mode === 'work') {
       onPomodoroCompleted(activeTask?.id, settings.workDuration);
       setSessionsCompletedToday((prev) => prev + 1);
-      setMode('shortBreak');
-      setTimeLeft(settings.shortBreakDuration * 60);
+      nextMode = 'shortBreak';
+      nextDuration = settings.shortBreakDuration * 60;
     } else {
-      setMode('work');
-      setTimeLeft(settings.workDuration * 60);
+      nextMode = 'work';
+      nextDuration = settings.workDuration * 60;
+    }
+
+    setMode(nextMode);
+    setTimeLeft(nextDuration);
+
+    if (!isRemoteUpdateRef.current) {
+      syncManager.broadcastTimerAction({
+        action: 'mode_change',
+        mode: nextMode,
+        timeLeft: nextDuration,
+        isRunning: false,
+        activeTaskId: activeTask?.id || null,
+        timestamp: Date.now(),
+      });
     }
   };
 
-  const toggleTimer = () => setIsRunning(!isRunning);
+  const toggleTimer = () => {
+    const nextRunning = !isRunning;
+    setIsRunning(nextRunning);
+    if (!isRemoteUpdateRef.current) {
+      syncManager.broadcastTimerAction({
+        action: nextRunning ? 'start' : 'pause',
+        mode,
+        timeLeft,
+        isRunning: nextRunning,
+        activeTaskId: activeTask?.id || null,
+        timestamp: Date.now(),
+      });
+    }
+  };
 
   const resetTimer = () => {
     setIsRunning(false);
-    setTimeLeft(getDuration(mode));
+    const duration = getDuration(mode);
+    setTimeLeft(duration);
+    if (!isRemoteUpdateRef.current) {
+      syncManager.broadcastTimerAction({
+        action: 'reset',
+        mode,
+        timeLeft: duration,
+        isRunning: false,
+        activeTaskId: activeTask?.id || null,
+        timestamp: Date.now(),
+      });
+    }
   };
 
   const skipTimer = () => {
     setIsRunning(false);
+    let nextMode: PomodoroMode;
+    let nextDuration: number;
     if (mode === 'work') {
-      setMode('shortBreak');
-      setTimeLeft(settings.shortBreakDuration * 60);
+      nextMode = 'shortBreak';
+      nextDuration = settings.shortBreakDuration * 60;
     } else {
-      setMode('work');
-      setTimeLeft(settings.workDuration * 60);
+      nextMode = 'work';
+      nextDuration = settings.workDuration * 60;
+    }
+    setMode(nextMode);
+    setTimeLeft(nextDuration);
+    if (!isRemoteUpdateRef.current) {
+      syncManager.broadcastTimerAction({
+        action: 'skip',
+        mode: nextMode,
+        timeLeft: nextDuration,
+        isRunning: false,
+        activeTaskId: activeTask?.id || null,
+        timestamp: Date.now(),
+      });
+    }
+  };
+
+  const switchMode = (newMode: PomodoroMode) => {
+    setMode(newMode);
+    setIsRunning(false);
+    const duration = getDuration(newMode);
+    setTimeLeft(duration);
+    if (!isRemoteUpdateRef.current) {
+      syncManager.broadcastTimerAction({
+        action: 'mode_change',
+        mode: newMode,
+        timeLeft: duration,
+        isRunning: false,
+        activeTaskId: activeTask?.id || null,
+        timestamp: Date.now(),
+      });
     }
   };
 
@@ -112,10 +211,7 @@ export function PomodoroTimer({
       {/* Mode Selectors */}
       <div className="grid grid-cols-3 gap-1.5 p-1 rounded-lg bg-[#161b22] border border-[#30363d]">
         <button
-          onClick={() => {
-            setMode('work');
-            setIsRunning(false);
-          }}
+          onClick={() => switchMode('work')}
           className={`whitespace-nowrap py-2 px-1.5 sm:px-3 rounded-md text-xs sm:text-sm font-semibold transition text-center ${
             mode === 'work'
               ? 'bg-[#21262d] text-white border border-[#30363d]'
@@ -126,10 +222,7 @@ export function PomodoroTimer({
         </button>
 
         <button
-          onClick={() => {
-            setMode('shortBreak');
-            setIsRunning(false);
-          }}
+          onClick={() => switchMode('shortBreak')}
           className={`whitespace-nowrap py-2 px-1.5 sm:px-3 rounded-md text-xs sm:text-sm font-semibold transition text-center ${
             mode === 'shortBreak'
               ? 'bg-[#21262d] text-white border border-[#30363d]'
@@ -140,10 +233,7 @@ export function PomodoroTimer({
         </button>
 
         <button
-          onClick={() => {
-            setMode('longBreak');
-            setIsRunning(false);
-          }}
+          onClick={() => switchMode('longBreak')}
           className={`whitespace-nowrap py-2 px-1.5 sm:px-3 rounded-md text-xs sm:text-sm font-semibold transition text-center ${
             mode === 'longBreak'
               ? 'bg-[#21262d] text-white border border-[#30363d]'
@@ -166,6 +256,16 @@ export function PomodoroTimer({
             onChange={(e) => {
               const selected = tasks.find((t) => t.id === e.target.value) || null;
               onSelectActiveTask(selected);
+              if (!isRemoteUpdateRef.current) {
+                syncManager.broadcastTimerAction({
+                  action: isRunning ? 'start' : 'pause',
+                  mode,
+                  timeLeft,
+                  isRunning,
+                  activeTaskId: selected?.id || null,
+                  timestamp: Date.now(),
+                });
+              }
             }}
             className="w-full bg-[#21262d] border border-[#30363d] rounded-md px-3.5 py-2 text-sm text-slate-200 focus:border-slate-400 transition cursor-pointer"
           >

@@ -7,7 +7,8 @@ import {
   ActiveTab, 
   PomodoroSettings, 
   DailyProductivityRecord, 
-  NotificationItem 
+  NotificationItem,
+  SyncConnectionStatus 
 } from '@/types';
 import { 
   getStoredTasks, 
@@ -24,6 +25,7 @@ import {
 import { soundEffects } from '@/lib/audio';
 import { checkTaskDeadlines, notifyTaskCompleted } from '@/lib/reminders';
 import { usePWA } from '@/hooks/usePWA';
+import { syncManager } from '@/lib/sync';
 
 import { Header } from '@/components/Header';
 import { NotificationCenter } from '@/components/NotificationCenter';
@@ -32,6 +34,7 @@ import { PomodoroTimer } from '@/components/PomodoroTimer';
 import { ProductivityDashboard } from '@/components/ProductivityDashboard';
 import { SettingsView } from '@/components/SettingsView';
 import { TaskModal } from '@/components/TaskModal';
+import { SyncModal } from '@/components/SyncModal';
 import { MobileNavigation } from '@/components/MobileNavigation';
 import { WifiOff } from 'lucide-react';
 
@@ -46,6 +49,11 @@ export default function HomePage() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [activeTab, setActiveTab] = useState<ActiveTab>('board');
   const [activeFocusTask, setActiveFocusTask] = useState<Task | null>(null);
+
+  // Sync state
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState<boolean>(false);
+  const [syncStatus, setSyncStatus] = useState<SyncConnectionStatus>('disconnected');
+  const [initialPinFromUrl, setInitialPinFromUrl] = useState<string | null>(null);
 
   // Modal & Notification Center state
   const [isTaskModalOpen, setIsTaskModalOpen] = useState<boolean>(false);
@@ -70,6 +78,32 @@ export default function HomePage() {
 
     const checked = checkTaskDeadlines(loadedTasks, false);
     setNotifications(checked);
+
+    // Subscribe to P2P sync changes
+    const unsubStatus = syncManager.onStatusChange((newStatus) => {
+      setSyncStatus(newStatus);
+    });
+
+    const unsubData = syncManager.onDataSync((newTasks, newHistory) => {
+      setTasks(newTasks);
+      setProductivityHistory(newHistory);
+      soundEffects.playPop();
+    });
+
+    // Check URL query param for QR code auto-connect (e.g. ?syncPin=1234)
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const pinParam = urlParams.get('syncPin');
+      if (pinParam && /^\d{4}$/.test(pinParam)) {
+        setInitialPinFromUrl(pinParam);
+        setIsSyncModalOpen(true);
+      }
+    }
+
+    return () => {
+      unsubStatus();
+      unsubData();
+    };
   }, []);
 
   // Periodic reminder check
@@ -91,6 +125,7 @@ export default function HomePage() {
 
   const handleSaveTask = (taskData: Partial<Task>) => {
     if (taskToEdit) {
+      let savedTask: Task | null = null;
       const updated = tasks.map((t) => {
         if (t.id === taskToEdit.id) {
           const isMarkedDone = taskData.status === 'done' && t.status !== 'done';
@@ -106,15 +141,20 @@ export default function HomePage() {
             setProductivityHistory(updatedHist);
           }
 
-          return {
+          savedTask = {
             ...t,
             ...taskData,
+            updatedAt: new Date().toISOString(),
             completedAt: isMarkedDone ? new Date().toISOString() : isUnmarkedDone ? null : t.completedAt,
           } as Task;
+          return savedTask;
         }
         return t;
       });
       updateTasks(updated);
+      if (savedTask) {
+        syncManager.broadcastTaskUpsert(savedTask);
+      }
     } else {
       const newTask: Task = {
         id: `t-${Date.now()}`,
@@ -129,6 +169,7 @@ export default function HomePage() {
         estimatedPomodoros: 1,
         completedPomodoros: 0,
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         completedAt: taskData.status === 'done' ? new Date().toISOString() : null,
         order: tasks.length,
       };
@@ -141,6 +182,7 @@ export default function HomePage() {
       }
 
       updateTasks([...tasks, newTask]);
+      syncManager.broadcastTaskUpsert(newTask);
     }
     setTaskToEdit(null);
   };
@@ -148,6 +190,7 @@ export default function HomePage() {
   const handleDeleteTask = (taskId: string) => {
     const updated = tasks.filter((t) => t.id !== taskId);
     updateTasks(updated);
+    syncManager.broadcastTaskDelete(taskId);
     if (activeFocusTask?.id === taskId) {
       setActiveFocusTask(null);
     }
@@ -172,33 +215,49 @@ export default function HomePage() {
       setProductivityHistory(updatedHist);
     }
 
-    const updated = tasks.map((t) =>
-      t.id === taskId
-        ? {
-            ...t,
-            status: newStatus,
-            completedAt: isMarkedDone
-              ? new Date().toISOString()
-              : isUnmarkedDone
-              ? null
-              : t.completedAt,
-          }
-        : t
-    );
+    let modifiedTask: Task | null = null;
+    const updated = tasks.map((t) => {
+      if (t.id === taskId) {
+        modifiedTask = {
+          ...t,
+          status: newStatus,
+          updatedAt: new Date().toISOString(),
+          completedAt: isMarkedDone
+            ? new Date().toISOString()
+            : isUnmarkedDone
+            ? null
+            : t.completedAt,
+        };
+        return modifiedTask;
+      }
+      return t;
+    });
     updateTasks(updated);
+    if (modifiedTask) {
+      syncManager.broadcastTaskUpsert(modifiedTask);
+    }
   };
 
   const handleToggleSubtask = (taskId: string, subtaskId: string) => {
+    let modifiedTask: Task | null = null;
     const updated = tasks.map((t) => {
       if (t.id === taskId) {
         const updatedSubs = t.subtasks.map((s) =>
           s.id === subtaskId ? { ...s, completed: !s.completed } : s
         );
-        return { ...t, subtasks: updatedSubs };
+        modifiedTask = { 
+          ...t, 
+          subtasks: updatedSubs, 
+          updatedAt: new Date().toISOString() 
+        };
+        return modifiedTask;
       }
       return t;
     });
     updateTasks(updated);
+    if (modifiedTask) {
+      syncManager.broadcastTaskUpsert(modifiedTask);
+    }
   };
 
   const handleStartFocus = (task: Task) => {
@@ -283,6 +342,8 @@ export default function HomePage() {
           setIsNotificationCenterOpen(!isNotificationCenterOpen)
         }
         isNotificationCenterOpen={isNotificationCenterOpen}
+        onOpenSyncModal={() => setIsSyncModalOpen(true)}
+        syncStatus={syncStatus}
       />
 
       <NotificationCenter
@@ -348,6 +409,8 @@ export default function HomePage() {
               setProductivityHistory(getProductivityHistory());
             }}
             onResetData={handleResetData}
+            onOpenSyncModal={() => setIsSyncModalOpen(true)}
+            syncStatus={syncStatus}
           />
         )}
       </main>
@@ -361,6 +424,12 @@ export default function HomePage() {
         onSave={handleSaveTask}
         taskToEdit={taskToEdit}
         defaultStatus={defaultStatusForNew}
+      />
+
+      <SyncModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        initialPinFromUrl={initialPinFromUrl}
       />
 
       <MobileNavigation

@@ -1,10 +1,11 @@
 import { Task, PomodoroSettings, DailyProductivityRecord, NotificationItem } from '@/types';
 
 const STORAGE_KEYS = {
-  TASKS: 'taskora_tasks_v2',
-  POMODORO_SETTINGS: 'taskora_pomodoro_settings_v2',
-  PRODUCTIVITY_HISTORY: 'taskora_productivity_history_v2',
-  NOTIFICATIONS: 'taskora_notifications_v2',
+  TASKS: 'taskora_tasks_v3',
+  POMODORO_SETTINGS: 'taskora_pomodoro_settings_v3',
+  PRODUCTIVITY_HISTORY: 'taskora_productivity_history_v3',
+  NOTIFICATIONS: 'taskora_notifications_v3',
+  DELETED_TASK_IDS: 'taskora_deleted_task_ids_v3',
 };
 
 export function formatDateKey(date: Date): string {
@@ -18,59 +19,9 @@ export function getTodayKey(): string {
   return formatDateKey(new Date());
 }
 
-const INITIAL_TASKS: Task[] = [
-  {
-    id: 't-1',
-    title: 'Review project scope and requirements',
-    description: 'Go through client notes and finalize deliverables list.',
-    status: 'in_progress',
-    priority: 'high',
-    dueDate: getTodayKey(),
-    dueTime: '16:00',
-    tags: ['Work'],
-    subtasks: [
-      { id: 's-1', title: 'Outline core milestones', completed: true },
-      { id: 's-2', title: 'Estimate timeline', completed: false },
-    ],
-    estimatedPomodoros: 2,
-    completedPomodoros: 1,
-    createdAt: new Date().toISOString(),
-    completedAt: null,
-    order: 0,
-  },
-  {
-    id: 't-2',
-    title: 'Respond to urgent emails',
-    description: 'Clear inbox and follow up with team leads.',
-    status: 'todo',
-    priority: 'medium',
-    dueDate: getTodayKey(),
-    dueTime: '18:00',
-    tags: ['Admin'],
-    subtasks: [],
-    estimatedPomodoros: 1,
-    completedPomodoros: 0,
-    createdAt: new Date().toISOString(),
-    completedAt: null,
-    order: 0,
-  },
-  {
-    id: 't-3',
-    title: 'Setup local workspace configuration',
-    description: 'Environment variables and repository setup.',
-    status: 'done',
-    priority: 'low',
-    dueDate: getTodayKey(),
-    dueTime: '',
-    tags: ['Dev'],
-    subtasks: [],
-    estimatedPomodoros: 1,
-    completedPomodoros: 1,
-    createdAt: new Date(Date.now() - 3600000 * 2).toISOString(),
-    completedAt: new Date(Date.now() - 3600000 * 1).toISOString(),
-    order: 0,
-  },
-];
+const DUMMY_TASK_IDS = new Set(['t-1', 't-2', 't-3']);
+
+const INITIAL_TASKS: Task[] = [];
 
 export const DEFAULT_POMODORO_SETTINGS: PomodoroSettings = {
   workDuration: 25,
@@ -86,12 +37,35 @@ export const DEFAULT_POMODORO_SETTINGS: PomodoroSettings = {
 export function getStoredTasks(): Task[] {
   if (typeof window === 'undefined') return INITIAL_TASKS;
   try {
+    const oldV2 = localStorage.getItem('taskora_tasks_v2');
     const stored = localStorage.getItem(STORAGE_KEYS.TASKS);
+
+    if (!stored && oldV2) {
+      try {
+        const parsed = JSON.parse(oldV2);
+        if (Array.isArray(parsed)) {
+          const filtered = parsed.filter((t: Task) => !DUMMY_TASK_IDS.has(t.id));
+          localStorage.setItem(STORAGE_KEYS.TASKS, JSON.stringify(filtered));
+          localStorage.removeItem('taskora_tasks_v2');
+          return filtered;
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     if (!stored) {
       localStorage.setItem(STORAGE_KEYS.TASKS, JSON.stringify(INITIAL_TASKS));
       return INITIAL_TASKS;
     }
-    return JSON.parse(stored);
+
+    const tasks: Task[] = JSON.parse(stored);
+    const cleaned = tasks.filter((t) => !DUMMY_TASK_IDS.has(t.id));
+    if (cleaned.length !== tasks.length) {
+      localStorage.setItem(STORAGE_KEYS.TASKS, JSON.stringify(cleaned));
+      return cleaned;
+    }
+    return tasks;
   } catch {
     return INITIAL_TASKS;
   }
@@ -109,7 +83,8 @@ export function saveStoredTasks(tasks: Task[]): void {
 export function getPomodoroSettings(): PomodoroSettings {
   if (typeof window === 'undefined') return DEFAULT_POMODORO_SETTINGS;
   try {
-    const stored = localStorage.getItem(STORAGE_KEYS.POMODORO_SETTINGS);
+    const oldV2 = localStorage.getItem('taskora_pomodoro_settings_v2');
+    const stored = localStorage.getItem(STORAGE_KEYS.POMODORO_SETTINGS) || oldV2;
     return stored ? { ...DEFAULT_POMODORO_SETTINGS, ...JSON.parse(stored) } : DEFAULT_POMODORO_SETTINGS;
   } catch {
     return DEFAULT_POMODORO_SETTINGS;
@@ -128,21 +103,56 @@ export function savePomodoroSettings(settings: PomodoroSettings): void {
 export function getProductivityHistory(): DailyProductivityRecord[] {
   if (typeof window === 'undefined') return [];
   try {
+    const oldV2 = localStorage.getItem('taskora_productivity_history_v2');
     const stored = localStorage.getItem(STORAGE_KEYS.PRODUCTIVITY_HISTORY);
-    if (!stored) {
-      const initial: DailyProductivityRecord[] = [
-        {
-          date: getTodayKey(),
-          tasksCompleted: 1,
-          focusMinutes: 25,
-          pomodorosCompleted: 1,
-          taskIdsCompleted: ['t-3'],
-        },
-      ];
-      localStorage.setItem(STORAGE_KEYS.PRODUCTIVITY_HISTORY, JSON.stringify(initial));
-      return initial;
+
+    if (!stored && oldV2) {
+      try {
+        const parsed: DailyProductivityRecord[] = JSON.parse(oldV2);
+        if (Array.isArray(parsed)) {
+          const cleaned = parsed
+            .map((rec) => {
+              const cleanedTaskIds = (rec.taskIdsCompleted || []).filter((id) => !DUMMY_TASK_IDS.has(id));
+              const dummyDiff = (rec.taskIdsCompleted || []).length - cleanedTaskIds.length;
+              return {
+                ...rec,
+                taskIdsCompleted: cleanedTaskIds,
+                tasksCompleted: Math.max(0, rec.tasksCompleted - dummyDiff),
+              };
+            })
+            .filter((rec) => rec.tasksCompleted > 0 || rec.focusMinutes > 0);
+
+          localStorage.setItem(STORAGE_KEYS.PRODUCTIVITY_HISTORY, JSON.stringify(cleaned));
+          localStorage.removeItem('taskora_productivity_history_v2');
+          return cleaned;
+        }
+      } catch {
+        // ignore
+      }
     }
-    return JSON.parse(stored);
+
+    if (!stored) {
+      localStorage.setItem(STORAGE_KEYS.PRODUCTIVITY_HISTORY, JSON.stringify([]));
+      return [];
+    }
+
+    const records: DailyProductivityRecord[] = JSON.parse(stored);
+    const cleaned = records
+      .map((rec) => {
+        const cleanedTaskIds = (rec.taskIdsCompleted || []).filter((id) => !DUMMY_TASK_IDS.has(id));
+        const dummyDiff = (rec.taskIdsCompleted || []).length - cleanedTaskIds.length;
+        return {
+          ...rec,
+          taskIdsCompleted: cleanedTaskIds,
+          tasksCompleted: Math.max(0, rec.tasksCompleted - dummyDiff),
+        };
+      })
+      .filter((rec) => rec.tasksCompleted > 0 || rec.focusMinutes > 0);
+
+    if (cleaned.length !== records.length) {
+      localStorage.setItem(STORAGE_KEYS.PRODUCTIVITY_HISTORY, JSON.stringify(cleaned));
+    }
+    return cleaned;
   } catch {
     return [];
   }
@@ -219,8 +229,18 @@ export function recordFocusSession(minutes: number): DailyProductivityRecord[] {
 export function getNotifications(): NotificationItem[] {
   if (typeof window === 'undefined') return [];
   try {
+    const oldV2 = localStorage.getItem('taskora_notifications_v2');
+    if (oldV2) localStorage.removeItem('taskora_notifications_v2');
+
     const stored = localStorage.getItem(STORAGE_KEYS.NOTIFICATIONS);
-    return stored ? JSON.parse(stored) : [];
+    if (!stored) return [];
+
+    const items: NotificationItem[] = JSON.parse(stored);
+    const cleaned = items.filter((n) => !n.taskId || !DUMMY_TASK_IDS.has(n.taskId));
+    if (cleaned.length !== items.length) {
+      localStorage.setItem(STORAGE_KEYS.NOTIFICATIONS, JSON.stringify(cleaned));
+    }
+    return cleaned;
   } catch {
     return [];
   }
@@ -237,7 +257,7 @@ export function saveNotifications(notifications: NotificationItem[]): void {
 
 export function exportTaskoraData(): string {
   const data = {
-    version: '2.0',
+    version: '3.0',
     exportedAt: new Date().toISOString(),
     tasks: getStoredTasks(),
     pomodoroSettings: getPomodoroSettings(),
@@ -258,10 +278,103 @@ export function importTaskoraData(jsonString: string): boolean {
   }
 }
 
+export function getDeletedTaskIds(): string[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const stored = localStorage.getItem(STORAGE_KEYS.DELETED_TASK_IDS);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function recordDeletedTaskId(id: string): void {
+  if (typeof window === 'undefined') return;
+  try {
+    const list = getDeletedTaskIds();
+    if (!list.includes(id)) {
+      const updated = [...list.slice(-100), id];
+      localStorage.setItem(STORAGE_KEYS.DELETED_TASK_IDS, JSON.stringify(updated));
+    }
+  } catch (e) {
+    console.error('Failed to record deleted task ID', e);
+  }
+}
+
+export function mergeTasks(
+  localTasks: Task[],
+  remoteTasks: Task[],
+  remoteDeletedIds: string[] = []
+): Task[] {
+  const localDeleted = new Set(getDeletedTaskIds());
+  const allDeleted = new Set([...localDeleted, ...remoteDeletedIds]);
+
+  const taskMap = new Map<string, Task>();
+
+  // Add local tasks that haven't been deleted
+  for (const task of localTasks) {
+    if (!allDeleted.has(task.id)) {
+      taskMap.set(task.id, task);
+    }
+  }
+
+  // Merge remote tasks
+  for (const remote of remoteTasks) {
+    if (allDeleted.has(remote.id)) continue;
+
+    const existing = taskMap.get(remote.id);
+    if (!existing) {
+      taskMap.set(remote.id, remote);
+    } else {
+      const localTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+      const remoteTime = new Date(remote.updatedAt || remote.createdAt || 0).getTime();
+      if (remoteTime > localTime) {
+        taskMap.set(remote.id, remote);
+      }
+    }
+  }
+
+  return Array.from(taskMap.values());
+}
+
+export function mergeProductivityHistory(
+  local: DailyProductivityRecord[],
+  remote: DailyProductivityRecord[]
+): DailyProductivityRecord[] {
+  const map = new Map<string, DailyProductivityRecord>();
+
+  for (const item of local) {
+    map.set(item.date, { ...item });
+  }
+
+  for (const rItem of remote) {
+    const existing = map.get(rItem.date);
+    if (!existing) {
+      map.set(rItem.date, { ...rItem });
+    } else {
+      const allTaskIds = Array.from(new Set([...(existing.taskIdsCompleted || []), ...(rItem.taskIdsCompleted || [])]));
+      map.set(rItem.date, {
+        date: rItem.date,
+        tasksCompleted: Math.max(existing.tasksCompleted, rItem.tasksCompleted, allTaskIds.length),
+        focusMinutes: Math.max(existing.focusMinutes, rItem.focusMinutes),
+        pomodorosCompleted: Math.max(existing.pomodorosCompleted, rItem.pomodorosCompleted),
+        taskIdsCompleted: allTaskIds,
+      });
+    }
+  }
+
+  return Array.from(map.values());
+}
+
 export function resetAllData(): void {
   if (typeof window === 'undefined') return;
-  localStorage.removeItem(STORAGE_KEYS.TASKS);
-  localStorage.removeItem(STORAGE_KEYS.POMODORO_SETTINGS);
-  localStorage.removeItem(STORAGE_KEYS.PRODUCTIVITY_HISTORY);
-  localStorage.removeItem(STORAGE_KEYS.NOTIFICATIONS);
+  Object.values(STORAGE_KEYS).forEach((k) => localStorage.removeItem(k));
+  localStorage.removeItem('taskora_tasks_v2');
+  localStorage.removeItem('taskora_pomodoro_settings_v2');
+  localStorage.removeItem('taskora_productivity_history_v2');
+  localStorage.removeItem('taskora_notifications_v2');
+  localStorage.removeItem('taskora_tasks_v1');
+  localStorage.removeItem('taskora_pomodoro_settings_v1');
+  localStorage.removeItem('taskora_productivity_history_v1');
+  localStorage.removeItem('taskora_notifications_v1');
 }

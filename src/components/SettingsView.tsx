@@ -1,15 +1,16 @@
-'use client';
-
 import React, { useState } from 'react';
-import { PomodoroSettings } from '@/types';
+import { PomodoroSettings, SyncConnectionStatus } from '@/types';
 import { soundEffects } from '@/lib/audio';
 import { exportTaskoraData, importTaskoraData } from '@/lib/storage';
+import { Wifi, Smartphone, Download, Upload, Trash2 } from 'lucide-react';
 
 interface SettingsViewProps {
   settings: PomodoroSettings;
   onUpdateSettings: (newSettings: PomodoroSettings) => void;
   onDataImported: () => void;
   onResetData: () => void;
+  onOpenSyncModal?: () => void;
+  syncStatus?: SyncConnectionStatus;
 }
 
 export function SettingsView({
@@ -17,6 +18,8 @@ export function SettingsView({
   onUpdateSettings,
   onDataImported,
   onResetData,
+  onOpenSyncModal,
+  syncStatus = 'disconnected',
 }: SettingsViewProps) {
   const [formData, setFormData] = useState<PomodoroSettings>(settings);
   const [saved, setSaved] = useState(false);
@@ -168,6 +171,42 @@ export function SettingsView({
           </button>
         </div>
       </form>
+
+      {/* Local Wi-Fi Device Sync */}
+      <div className="p-5 rounded-xl border border-[#30363d] bg-[#161b22] space-y-3.5 shadow-xs">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+              <Wifi className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-bold text-white">Local Device Sync (P2P)</h3>
+              <p className="text-xs text-slate-400">Sync mobile and desktop in real-time over Wi-Fi with 4-digit PIN or QR code.</p>
+            </div>
+          </div>
+          {syncStatus === 'connected' ? (
+            <span className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded bg-emerald-950/60 border border-emerald-700/80 text-emerald-300">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+              Connected
+            </span>
+          ) : syncStatus === 'connecting' ? (
+            <span className="text-xs text-amber-400 font-medium">Pairing...</span>
+          ) : (
+            <span className="text-xs text-slate-500 font-medium">Not Connected</span>
+          )}
+        </div>
+
+        <div className="pt-1">
+          <button
+            type="button"
+            onClick={onOpenSyncModal}
+            className="px-4 py-2 text-xs font-bold rounded-lg bg-white hover:bg-slate-100 text-slate-950 transition flex items-center gap-2 shadow-xs"
+          >
+            <Smartphone className="w-4 h-4" />
+            <span>{syncStatus === 'connected' ? 'Manage Synced Device' : 'Pair / Connect Device'}</span>
+          </button>
+        </div>
+      </div>
 
       {/* Backup and restore */}
       <div className="p-5 rounded-xl border border-[#30363d] bg-[#161b22] space-y-3.5 shadow-xs">
