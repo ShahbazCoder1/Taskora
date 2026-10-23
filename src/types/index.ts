@@ -67,9 +67,12 @@ export interface TaskFilters {
   sortDirection: 'asc' | 'desc';
 }
 
-export type SyncConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type SyncConnectionStatus = 'disconnected' | 'connecting' | 'authorizing' | 'connected' | 'error';
 
 export type SyncMessageType =
+  | 'PAIRING_REQUEST'
+  | 'PAIRING_ACCEPTED'
+  | 'PAIRING_DECLINED'
   | 'HANDSHAKE'
   | 'FULL_SYNC'
   | 'TASK_UPSERT'
@@ -98,4 +101,10 @@ export interface ConnectedDevice {
   name: string;
   isHost: boolean;
   connectedAt: number;
+}
+
+export interface PairingRequestInfo {
+  deviceId: string;
+  deviceName: string;
+  requestedAt: number;
 }

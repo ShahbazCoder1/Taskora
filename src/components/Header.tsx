@@ -116,6 +116,8 @@ export function Header({
             className={`relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-semibold border transition ${
               syncStatus === 'connected'
                 ? 'bg-emerald-950/60 border-emerald-700/80 text-emerald-300'
+                : syncStatus === 'authorizing'
+                ? 'bg-indigo-950/70 border-indigo-600 text-indigo-300 ring-2 ring-indigo-500/30'
                 : syncStatus === 'connecting'
                 ? 'bg-amber-950/60 border-amber-700/80 text-amber-300'
                 : 'bg-[#21262d] border-[#30363d] text-slate-300 hover:text-white hover:bg-[#30363d]'
@@ -127,6 +129,11 @@ export function Header({
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
               </span>
+            ) : syncStatus === 'authorizing' ? (
+              <span className="relative flex h-2 w-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-indigo-500" />
+              </span>
             ) : syncStatus === 'connecting' ? (
               <span className="relative flex h-2 w-2">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
@@ -136,7 +143,7 @@ export function Header({
               <Wifi className="w-3.5 h-3.5 text-slate-400" />
             )}
             <span className="hidden sm:inline">
-              {syncStatus === 'connected' ? 'Synced' : syncStatus === 'connecting' ? 'Pairing...' : 'Sync'}
+              {syncStatus === 'connected' ? 'Synced' : syncStatus === 'authorizing' ? 'Authorize' : syncStatus === 'connecting' ? 'Pairing...' : 'Sync'}
             </span>
           </button>
 

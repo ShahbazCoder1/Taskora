@@ -7,7 +7,8 @@ import {
   SyncMessage, 
   SyncConnectionStatus, 
   TimerSyncPayload, 
-  ConnectedDevice 
+  ConnectedDevice,
+  PairingRequestInfo
 } from '@/types';
 import { 
   getStoredTasks, 
@@ -26,12 +27,13 @@ import {
 export function getDeviceName(): string {
   if (typeof window === 'undefined') return 'Taskora Device';
   const ua = navigator.userAgent;
-  if (/iPad|iPhone|iPod/.test(ua)) return 'iPhone / iPad';
-  if (/Android/.test(ua)) return 'Android Device';
+  if (/iPhone/.test(ua)) return 'iPhone';
+  if (/iPad/.test(ua)) return 'iPad';
+  if (/Android/.test(ua)) return 'Android Phone';
   if (/Macintosh/.test(ua)) return 'Mac Desktop';
-  if (/Windows/.test(ua)) return 'Windows PC';
-  if (/Linux/.test(ua)) return 'Linux Device';
-  return 'Web Device';
+  if (/Windows/.test(ua)) return 'Windows Laptop';
+  if (/Linux/.test(ua)) return 'Linux PC';
+  return 'Mobile Device';
 }
 
 // Generate random 4-digit numeric PIN (1000 - 9999)
@@ -43,6 +45,7 @@ type MessageHandler = (message: SyncMessage) => void;
 type StatusHandler = (status: SyncConnectionStatus, device?: ConnectedDevice | null) => void;
 type TimerSyncHandler = (payload: TimerSyncPayload) => void;
 type DataSyncHandler = (tasks: Task[], history: DailyProductivityRecord[]) => void;
+type PairingRequestHandler = (request: PairingRequestInfo | null) => void;
 
 class DeviceSyncManager {
   private peer: any = null;
@@ -51,10 +54,12 @@ class DeviceSyncManager {
   private isHost: boolean = false;
   private status: SyncConnectionStatus = 'disconnected';
   private connectedDevice: ConnectedDevice | null = null;
+  private pendingPairingRequest: PairingRequestInfo | null = null;
 
   private statusListeners: Set<StatusHandler> = new Set();
   private timerListeners: Set<TimerSyncHandler> = new Set();
   private dataListeners: Set<DataSyncHandler> = new Set();
+  private pairingListeners: Set<PairingRequestHandler> = new Set();
 
   constructor() {
     // Listen for cross-tab local updates using BroadcastChannel if supported
@@ -68,6 +73,12 @@ class DeviceSyncManager {
             const tasks = getStoredTasks();
             const history = getProductivityHistory();
             this.dataListeners.forEach((fn) => fn(tasks, history));
+          } else if (event.data?.type === 'TAB_PAIRING_REQUEST') {
+            this.pendingPairingRequest = event.data.payload;
+            this.pairingListeners.forEach((fn) => fn(this.pendingPairingRequest));
+          } else if (event.data?.type === 'TAB_PAIRING_RESOLVED') {
+            this.pendingPairingRequest = null;
+            this.pairingListeners.forEach((fn) => fn(null));
           }
         };
       } catch (err) {
@@ -90,6 +101,17 @@ class DeviceSyncManager {
 
   public getIsHost(): boolean {
     return this.isHost;
+  }
+
+  public getPendingPairingRequest(): PairingRequestInfo | null {
+    return this.pendingPairingRequest;
+  }
+
+  // Subscribe to pairing requests on Host laptop
+  public onPairingRequest(callback: PairingRequestHandler): () => void {
+    this.pairingListeners.add(callback);
+    callback(this.pendingPairingRequest);
+    return () => this.pairingListeners.delete(callback);
   }
 
   // Subscribe to connection status changes
@@ -214,24 +236,21 @@ class DeviceSyncManager {
     this.activeConn = conn;
 
     conn.on('open', () => {
-      const device: ConnectedDevice = {
-        id: conn.peer,
-        name: isInitiator ? 'Host Device' : 'Connected Client',
-        isHost: !isInitiator,
-        connectedAt: Date.now(),
-      };
-      this.setStatus('connected', device);
+      if (isInitiator) {
+        // Client (Phone): Request authorization from laptop before exchanging tasks
+        this.setStatus('authorizing', null);
 
-      // Send initial handshake with our device name
-      this.send({
-        type: 'HANDSHAKE',
-        senderId: this.peer?.id || '',
-        senderDevice: getDeviceName(),
-        timestamp: Date.now(),
-      });
-
-      // Send full local data to perform bidirectional merge
-      this.sendFullSync();
+        this.send({
+          type: 'PAIRING_REQUEST',
+          senderId: this.peer?.id || '',
+          senderDevice: getDeviceName(),
+          timestamp: Date.now(),
+        });
+      } else {
+        // Host (Laptop): Wait for client's PAIRING_REQUEST.
+        // DO NOT send any tasks or data yet!
+        this.setStatus('connecting', null);
+      }
     });
 
     conn.on('data', (data: any) => {
@@ -239,12 +258,20 @@ class DeviceSyncManager {
     });
 
     conn.on('close', () => {
-      this.setStatus('disconnected', null);
+      this.pendingPairingRequest = null;
+      this.pairingListeners.forEach((fn) => fn(null));
+      if (this.isHost) {
+        this.setStatus('connecting', null);
+      } else {
+        this.setStatus('disconnected', null);
+      }
       this.activeConn = null;
     });
 
     conn.on('error', (err: any) => {
       console.warn('Data connection error:', err);
+      this.pendingPairingRequest = null;
+      this.pairingListeners.forEach((fn) => fn(null));
       this.setStatus('error', null);
     });
   }
@@ -268,6 +295,47 @@ class DeviceSyncManager {
     if (!msg || !msg.type) return;
 
     switch (msg.type) {
+      case 'PAIRING_REQUEST': {
+        // Received on Laptop Host from Phone
+        const req: PairingRequestInfo = {
+          deviceId: msg.senderId || this.activeConn?.peer || 'client',
+          deviceName: msg.senderDevice || 'Phone',
+          requestedAt: Date.now(),
+        };
+        this.pendingPairingRequest = req;
+        this.setStatus('authorizing', null);
+        this.pairingListeners.forEach((fn) => fn(req));
+        this.broadcastTabMessage({ type: 'TAB_PAIRING_REQUEST', payload: req });
+        break;
+      }
+
+      case 'PAIRING_ACCEPTED': {
+        // Received on Phone Client when Laptop clicked "Accept"
+        const hostDevice: ConnectedDevice = {
+          id: msg.senderId || this.activeConn?.peer || 'host',
+          name: msg.senderDevice || 'Laptop',
+          isHost: false,
+          connectedAt: Date.now(),
+        };
+        this.setStatus('connected', hostDevice);
+
+        // NOW exchange tasks and data safely
+        this.sendFullSync();
+        break;
+      }
+
+      case 'PAIRING_DECLINED': {
+        // Received on Phone Client when Laptop clicked "Decline"
+        if (this.activeConn) {
+          try {
+            this.activeConn.close();
+          } catch {}
+          this.activeConn = null;
+        }
+        this.setStatus('error', null);
+        break;
+      }
+
       case 'HANDSHAKE': {
         if (this.connectedDevice) {
           const updated: ConnectedDevice = {
@@ -424,8 +492,71 @@ class DeviceSyncManager {
     this.broadcastTabMessage({ type: 'TAB_TIMER', payload });
   }
 
+  // Host approves connection from client device (e.g. iPhone)
+  public acceptPairing() {
+    if (!this.activeConn || !this.pendingPairingRequest) return;
+
+    const clientName = this.pendingPairingRequest.deviceName;
+    const clientId = this.pendingPairingRequest.deviceId;
+
+    // Send confirmation to client
+    this.send({
+      type: 'PAIRING_ACCEPTED',
+      senderId: this.peer?.id || '',
+      senderDevice: getDeviceName(),
+      timestamp: Date.now(),
+    });
+
+    const device: ConnectedDevice = {
+      id: clientId || this.activeConn.peer,
+      name: clientName,
+      isHost: true,
+      connectedAt: Date.now(),
+    };
+
+    this.pendingPairingRequest = null;
+    this.pairingListeners.forEach((fn) => fn(null));
+    this.setStatus('connected', device);
+    this.broadcastTabMessage({ type: 'TAB_PAIRING_RESOLVED' });
+
+    // Now exchange full local tasks and data with authorized client
+    this.sendFullSync();
+  }
+
+  // Host declines connection from client device
+  public declinePairing() {
+    if (this.activeConn) {
+      this.send({
+        type: 'PAIRING_DECLINED',
+        senderId: this.peer?.id || '',
+        senderDevice: getDeviceName(),
+        timestamp: Date.now(),
+      });
+
+      setTimeout(() => {
+        try {
+          this.activeConn?.close();
+        } catch {
+          // ignore
+        }
+        this.activeConn = null;
+      }, 150);
+    }
+
+    this.pendingPairingRequest = null;
+    this.pairingListeners.forEach((fn) => fn(null));
+    this.broadcastTabMessage({ type: 'TAB_PAIRING_RESOLVED' });
+
+    // Host remains listening for next pairing attempt
+    this.setStatus('connecting', null);
+  }
+
   // Disconnect active session
   public disconnect() {
+    this.pendingPairingRequest = null;
+    this.pairingListeners.forEach((fn) => fn(null));
+    this.broadcastTabMessage({ type: 'TAB_PAIRING_RESOLVED' });
+
     if (this.activeConn) {
       try {
         this.activeConn.close();

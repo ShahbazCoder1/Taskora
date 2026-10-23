@@ -8,7 +8,8 @@ import {
   PomodoroSettings, 
   DailyProductivityRecord, 
   NotificationItem,
-  SyncConnectionStatus 
+  SyncConnectionStatus,
+  PairingRequestInfo 
 } from '@/types';
 import { 
   getStoredTasks, 
@@ -36,7 +37,7 @@ import { SettingsView } from '@/components/SettingsView';
 import { TaskModal } from '@/components/TaskModal';
 import { SyncModal } from '@/components/SyncModal';
 import { MobileNavigation } from '@/components/MobileNavigation';
-import { WifiOff } from 'lucide-react';
+import { WifiOff, Smartphone, Check, X } from 'lucide-react';
 
 export default function HomePage() {
   const [mounted, setMounted] = useState<boolean>(false);
@@ -53,6 +54,7 @@ export default function HomePage() {
   // Sync state
   const [isSyncModalOpen, setIsSyncModalOpen] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<SyncConnectionStatus>('disconnected');
+  const [pendingPairing, setPendingPairing] = useState<PairingRequestInfo | null>(null);
   const [initialPinFromUrl, setInitialPinFromUrl] = useState<string | null>(null);
 
   // Modal & Notification Center state
@@ -90,6 +92,13 @@ export default function HomePage() {
       soundEffects.playPop();
     });
 
+    const unsubPairing = syncManager.onPairingRequest((req) => {
+      setPendingPairing(req);
+      if (req) {
+        soundEffects.playReminderAlert();
+      }
+    });
+
     // Check URL query param for QR code auto-connect (e.g. ?syncPin=1234)
     if (typeof window !== 'undefined') {
       const urlParams = new URLSearchParams(window.location.search);
@@ -103,6 +112,7 @@ export default function HomePage() {
     return () => {
       unsubStatus();
       unsubData();
+      unsubPairing();
     };
   }, []);
 
@@ -431,6 +441,52 @@ export default function HomePage() {
         onClose={() => setIsSyncModalOpen(false)}
         initialPinFromUrl={initialPinFromUrl}
       />
+
+      {/* Floating Confirm Pairing Prompt on Laptop when modal is closed */}
+      {pendingPairing && !isSyncModalOpen && (
+        <aside 
+          aria-label="Confirm Pairing on Laptop"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-50 w-full max-w-md px-4 animate-in slide-in-from-top-4 duration-300 pointer-events-auto"
+        >
+          <div className="p-4 rounded-2xl bg-[#161b22] border-2 border-indigo-500 shadow-2xl text-white">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center shrink-0 mt-0.5">
+                <Smartphone className="w-5 h-5 animate-pulse" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider bg-indigo-500/25 text-indigo-300">
+                    Confirm Pairing on Laptop
+                  </span>
+                  <span className="text-[11px] text-slate-400">Incoming</span>
+                </div>
+                <h4 className="text-sm font-bold text-white">
+                  Allow connection from &apos;{pendingPairing.deviceName}&apos;?
+                </h4>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Confirm pairing before exchanging any tasks.
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 mt-3 pt-3 border-t border-[#30363d]">
+              <button
+                onClick={() => syncManager.acceptPairing()}
+                className="py-2 px-3 rounded-lg bg-emerald-500 hover:bg-emerald-400 active:scale-[0.98] text-slate-950 font-bold text-xs transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-500/20"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>Accept</span>
+              </button>
+              <button
+                onClick={() => syncManager.declinePairing()}
+                className="py-2 px-3 rounded-lg bg-[#21262d] hover:bg-rose-950/60 active:scale-[0.98] text-slate-300 hover:text-rose-300 border border-[#30363d] font-semibold text-xs transition flex items-center justify-center gap-1.5"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Decline</span>
+              </button>
+            </div>
+          </div>
+        </aside>
+      )}
 
       <MobileNavigation
         activeTab={activeTab}
