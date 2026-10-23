@@ -22,10 +22,6 @@ export function PomodoroTimer({
   onSelectActiveTask,
   onPomodoroCompleted,
 }: PomodoroTimerProps) {
-  const [mode, setMode] = useState<PomodoroMode>('work');
-  const [isRunning, setIsRunning] = useState<boolean>(false);
-  const [sessionsCompletedToday, setSessionsCompletedToday] = useState<number>(0);
-
   const getDuration = (currentMode: PomodoroMode) => {
     switch (currentMode) {
       case 'work':
@@ -37,20 +33,48 @@ export function PomodoroTimer({
     }
   };
 
-  const [timeLeft, setTimeLeft] = useState<number>(() => getDuration('work'));
+  const initialTimer = syncManager.getTimerState();
+  const [mode, setMode] = useState<PomodoroMode>(() => initialTimer?.mode || 'work');
+  const [isRunning, setIsRunning] = useState<boolean>(() => Boolean(initialTimer?.isRunning));
+  const [timeLeft, setTimeLeft] = useState<number>(() => {
+    if (initialTimer && typeof initialTimer.timeLeft === 'number') {
+      return initialTimer.timeLeft;
+    }
+    return getDuration('work');
+  });
+  const [sessionsCompletedToday, setSessionsCompletedToday] = useState<number>(0);
+
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const targetEndTimeRef = useRef<number | null>(
+    initialTimer?.isRunning
+      ? initialTimer.targetEndTime || (initialTimer.timestamp + initialTimer.timeLeft * 1000)
+      : null
+  );
   const isRemoteUpdateRef = useRef<boolean>(false);
 
   // Subscribe to live timer synchronization from paired device
   useEffect(() => {
     const unsubscribe = syncManager.onTimerSync((payload) => {
       isRemoteUpdateRef.current = true;
-      if (payload.mode && payload.mode !== mode) {
+      if (payload.mode) {
         setMode(payload.mode);
       }
-      if (typeof payload.timeLeft === 'number') {
-        setTimeLeft(payload.timeLeft);
+
+      let computedTimeLeft = payload.timeLeft;
+      if (payload.isRunning) {
+        if (payload.targetEndTime) {
+          targetEndTimeRef.current = payload.targetEndTime;
+          computedTimeLeft = Math.max(0, Math.ceil((payload.targetEndTime - Date.now()) / 1000));
+        } else if (payload.timestamp) {
+          const elapsed = Math.floor((Date.now() - payload.timestamp) / 1000);
+          computedTimeLeft = Math.max(0, payload.timeLeft - elapsed);
+          targetEndTimeRef.current = Date.now() + computedTimeLeft * 1000;
+        }
+      } else {
+        targetEndTimeRef.current = null;
       }
+
+      setTimeLeft(computedTimeLeft);
       setIsRunning(Boolean(payload.isRunning));
 
       if (payload.activeTaskId !== undefined) {
@@ -64,36 +88,101 @@ export function PomodoroTimer({
     });
 
     return () => unsubscribe();
-  }, [mode, tasks, onSelectActiveTask]);
+  }, [tasks, onSelectActiveTask]);
+
+  // Adjust duration if settings changed in Settings tab while timer is idle
+  const prevSettingsDurationsRef = useRef({
+    work: settings.workDuration,
+    shortBreak: settings.shortBreakDuration,
+    longBreak: settings.longBreakDuration,
+  });
 
   useEffect(() => {
-    if (!isRunning) {
-      setTimeLeft(getDuration(mode));
+    const prev = prevSettingsDurationsRef.current;
+    if (
+      prev.work !== settings.workDuration ||
+      prev.shortBreak !== settings.shortBreakDuration ||
+      prev.longBreak !== settings.longBreakDuration
+    ) {
+      prevSettingsDurationsRef.current = {
+        work: settings.workDuration,
+        shortBreak: settings.shortBreakDuration,
+        longBreak: settings.longBreakDuration,
+      };
+      if (!isRunning) {
+        setTimeLeft(getDuration(mode));
+      }
     }
-  }, [mode, settings.workDuration, settings.shortBreakDuration, settings.longBreakDuration]);
+  }, [settings.workDuration, settings.shortBreakDuration, settings.longBreakDuration, isRunning, mode]);
 
+  // Handle countdown with wall-clock accuracy and visibility/focus change recovery
   useEffect(() => {
     if (isRunning) {
-      timerRef.current = setInterval(() => {
-        setTimeLeft((prev) => {
-          if (prev <= 1) {
-            handleComplete();
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+      if (!targetEndTimeRef.current) {
+        targetEndTimeRef.current = Date.now() + timeLeft * 1000;
+      }
+
+      const updateRemaining = () => {
+        if (!targetEndTimeRef.current) return;
+        const remaining = Math.max(0, Math.ceil((targetEndTimeRef.current - Date.now()) / 1000));
+        setTimeLeft(remaining);
+        if (remaining <= 0) {
+          handleComplete();
+        }
+      };
+
+      updateRemaining();
+      timerRef.current = setInterval(updateRemaining, 1000);
+
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible') {
+          updateRemaining();
+        }
+      };
+      const handleWindowFocus = () => {
+        updateRemaining();
+      };
+
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+      window.addEventListener('focus', handleWindowFocus);
+
+      return () => {
+        if (timerRef.current) clearInterval(timerRef.current);
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        window.removeEventListener('focus', handleWindowFocus);
+      };
     } else {
+      targetEndTimeRef.current = null;
       if (timerRef.current) clearInterval(timerRef.current);
     }
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
   }, [isRunning, mode]);
+
+  // Periodic lockstep heartbeat while timer is running (every 10s)
+  useEffect(() => {
+    if (!isRunning) return;
+    const heartbeatInterval = setInterval(() => {
+      if (!isRemoteUpdateRef.current && targetEndTimeRef.current) {
+        const remaining = Math.max(0, Math.ceil((targetEndTimeRef.current - Date.now()) / 1000));
+        syncManager.broadcastTimerAction({
+          action: 'tick',
+          mode,
+          timeLeft: remaining,
+          isRunning: true,
+          activeTaskId: activeTask?.id || null,
+          timestamp: Date.now(),
+          targetEndTime: targetEndTimeRef.current,
+        });
+      }
+    }, 10000);
+
+    return () => clearInterval(heartbeatInterval);
+  }, [isRunning, mode, activeTask]);
 
   const handleComplete = () => {
     setIsRunning(false);
+    targetEndTimeRef.current = null;
+    if (timerRef.current) clearInterval(timerRef.current);
+
     if (settings.soundEnabled) {
       soundEffects.playPomodoroFinish();
     }
@@ -123,12 +212,18 @@ export function PomodoroTimer({
         isRunning: false,
         activeTaskId: activeTask?.id || null,
         timestamp: Date.now(),
+        targetEndTime: null,
       });
     }
   };
 
   const toggleTimer = () => {
     const nextRunning = !isRunning;
+    if (nextRunning) {
+      targetEndTimeRef.current = Date.now() + timeLeft * 1000;
+    } else {
+      targetEndTimeRef.current = null;
+    }
     setIsRunning(nextRunning);
     if (!isRemoteUpdateRef.current) {
       syncManager.broadcastTimerAction({
@@ -138,12 +233,14 @@ export function PomodoroTimer({
         isRunning: nextRunning,
         activeTaskId: activeTask?.id || null,
         timestamp: Date.now(),
+        targetEndTime: targetEndTimeRef.current,
       });
     }
   };
 
   const resetTimer = () => {
     setIsRunning(false);
+    targetEndTimeRef.current = null;
     const duration = getDuration(mode);
     setTimeLeft(duration);
     if (!isRemoteUpdateRef.current) {
@@ -154,12 +251,14 @@ export function PomodoroTimer({
         isRunning: false,
         activeTaskId: activeTask?.id || null,
         timestamp: Date.now(),
+        targetEndTime: null,
       });
     }
   };
 
   const skipTimer = () => {
     setIsRunning(false);
+    targetEndTimeRef.current = null;
     let nextMode: PomodoroMode;
     let nextDuration: number;
     if (mode === 'work') {
@@ -179,6 +278,7 @@ export function PomodoroTimer({
         isRunning: false,
         activeTaskId: activeTask?.id || null,
         timestamp: Date.now(),
+        targetEndTime: null,
       });
     }
   };
@@ -186,6 +286,7 @@ export function PomodoroTimer({
   const switchMode = (newMode: PomodoroMode) => {
     setMode(newMode);
     setIsRunning(false);
+    targetEndTimeRef.current = null;
     const duration = getDuration(newMode);
     setTimeLeft(duration);
     if (!isRemoteUpdateRef.current) {
@@ -196,6 +297,7 @@ export function PomodoroTimer({
         isRunning: false,
         activeTaskId: activeTask?.id || null,
         timestamp: Date.now(),
+        targetEndTime: null,
       });
     }
   };

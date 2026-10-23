@@ -16,7 +16,7 @@ export function MobileNavigation({
   onOpenNewTaskModal,
 }: MobileNavigationProps) {
   return (
-    <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#161b22]/95 backdrop-blur-md border-t border-[#30363d] px-2 pt-2 pb-1.5">
+    <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#161b22]/95 backdrop-blur-md border-t border-[#30363d] px-2 pt-2 pb-2">
       <div className="grid grid-cols-5 items-center w-full max-w-md mx-auto">
         {/* Tab 1: Board */}
         <button

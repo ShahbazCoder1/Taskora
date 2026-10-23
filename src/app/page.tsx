@@ -392,7 +392,7 @@ export default function HomePage() {
           />
         )}
 
-        {activeTab === 'pomodoro' && (
+        <div className={activeTab === 'pomodoro' ? 'block' : 'hidden'}>
           <PomodoroTimer
             settings={settings}
             tasks={tasks}
@@ -400,7 +400,7 @@ export default function HomePage() {
             onSelectActiveTask={setActiveFocusTask}
             onPomodoroCompleted={handlePomodoroCompleted}
           />
-        )}
+        </div>
 
         {activeTab === 'analytics' && (
           <ProductivityDashboard

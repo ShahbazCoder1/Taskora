@@ -55,6 +55,7 @@ class DeviceSyncManager {
   private status: SyncConnectionStatus = 'disconnected';
   private connectedDevice: ConnectedDevice | null = null;
   private pendingPairingRequest: PairingRequestInfo | null = null;
+  private currentTimerState: TimerSyncPayload | null = null;
 
   private statusListeners: Set<StatusHandler> = new Set();
   private timerListeners: Set<TimerSyncHandler> = new Set();
@@ -68,6 +69,7 @@ class DeviceSyncManager {
         const bc = new BroadcastChannel('taskora_tab_sync');
         bc.onmessage = (event) => {
           if (event.data?.type === 'TAB_TIMER') {
+            this.currentTimerState = event.data.payload;
             this.timerListeners.forEach((fn) => fn(event.data.payload));
           } else if (event.data?.type === 'TAB_DATA') {
             const tasks = getStoredTasks();
@@ -107,6 +109,24 @@ class DeviceSyncManager {
     return this.pendingPairingRequest;
   }
 
+  public getTimerState(): TimerSyncPayload | null {
+    if (!this.currentTimerState) return null;
+    if (this.currentTimerState.isRunning) {
+      let remaining = this.currentTimerState.timeLeft;
+      if (this.currentTimerState.targetEndTime) {
+        remaining = Math.max(0, Math.ceil((this.currentTimerState.targetEndTime - Date.now()) / 1000));
+      } else if (this.currentTimerState.timestamp) {
+        const elapsed = Math.floor((Date.now() - this.currentTimerState.timestamp) / 1000);
+        remaining = Math.max(0, this.currentTimerState.timeLeft - elapsed);
+      }
+      return {
+        ...this.currentTimerState,
+        timeLeft: remaining,
+      };
+    }
+    return this.currentTimerState;
+  }
+
   // Subscribe to pairing requests on Host laptop
   public onPairingRequest(callback: PairingRequestHandler): () => void {
     this.pairingListeners.add(callback);
@@ -124,6 +144,10 @@ class DeviceSyncManager {
   // Subscribe to incoming live Pomodoro events
   public onTimerSync(callback: TimerSyncHandler): () => void {
     this.timerListeners.add(callback);
+    const active = this.getTimerState();
+    if (active) {
+      callback(active);
+    }
     return () => this.timerListeners.delete(callback);
   }
 
@@ -369,6 +393,23 @@ class DeviceSyncManager {
         // Notify app components to re-render with merged data
         this.dataListeners.forEach((fn) => fn(mergedTasks, mergedHistory));
         this.broadcastTabMessage({ type: 'TAB_DATA' });
+
+        // Synchronize active timer state if present
+        if (msg.payload?.timerState) {
+          const remoteTimer: TimerSyncPayload = { ...msg.payload.timerState };
+          if (remoteTimer.isRunning) {
+            if (remoteTimer.targetEndTime) {
+              remoteTimer.timeLeft = Math.max(0, Math.ceil((remoteTimer.targetEndTime - Date.now()) / 1000));
+            } else if (remoteTimer.timestamp) {
+              const elapsed = Math.floor((Date.now() - remoteTimer.timestamp) / 1000);
+              remoteTimer.timeLeft = Math.max(0, remoteTimer.timeLeft - elapsed);
+              remoteTimer.targetEndTime = Date.now() + remoteTimer.timeLeft * 1000;
+            }
+          }
+          this.currentTimerState = remoteTimer;
+          this.timerListeners.forEach((fn) => fn(remoteTimer));
+          this.broadcastTabMessage({ type: 'TAB_TIMER', payload: remoteTimer });
+        }
         break;
       }
 
@@ -413,6 +454,16 @@ class DeviceSyncManager {
         const timerPayload: TimerSyncPayload = msg.payload;
         if (!timerPayload) return;
 
+        if (timerPayload.isRunning) {
+          if (!timerPayload.targetEndTime && timerPayload.timestamp) {
+            timerPayload.targetEndTime = timerPayload.timestamp + timerPayload.timeLeft * 1000;
+          }
+          if (timerPayload.targetEndTime) {
+            timerPayload.timeLeft = Math.max(0, Math.ceil((timerPayload.targetEndTime - Date.now()) / 1000));
+          }
+        }
+
+        this.currentTimerState = timerPayload;
         this.timerListeners.forEach((fn) => fn(timerPayload));
         this.broadcastTabMessage({ type: 'TAB_TIMER', payload: timerPayload });
         break;
@@ -440,6 +491,15 @@ class DeviceSyncManager {
     const settings = getPomodoroSettings();
     const deletedIds = getDeletedTaskIds();
 
+    let timerSnapshot: TimerSyncPayload | null = null;
+    const current = this.getTimerState();
+    if (current) {
+      timerSnapshot = {
+        ...current,
+        timestamp: Date.now(),
+      };
+    }
+
     this.send({
       type: 'FULL_SYNC',
       senderId: this.peer?.id || '',
@@ -450,6 +510,7 @@ class DeviceSyncManager {
         history,
         settings,
         deletedIds,
+        timerState: timerSnapshot,
       },
     });
   }
@@ -482,6 +543,12 @@ class DeviceSyncManager {
 
   // Broadcast live Pomodoro timer action (Start / Pause / Reset / Skip)
   public broadcastTimerAction(payload: TimerSyncPayload) {
+    if (payload.isRunning && !payload.targetEndTime) {
+      payload.targetEndTime = Date.now() + payload.timeLeft * 1000;
+    } else if (!payload.isRunning) {
+      payload.targetEndTime = null;
+    }
+    this.currentTimerState = payload;
     this.send({
       type: 'TIMER_EVENT',
       senderId: this.peer?.id || '',

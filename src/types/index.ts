@@ -86,6 +86,7 @@ export interface TimerSyncPayload {
   isRunning: boolean;
   activeTaskId?: string | null;
   timestamp: number;
+  targetEndTime?: number | null;
 }
 
 export interface SyncMessage {
