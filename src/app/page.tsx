@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useCallback, useTransition } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useTransition } from 'react';
 import { 
   Task, 
   TaskStatus, 
@@ -21,11 +21,17 @@ import {
   recordFocusSession, 
   getNotifications, 
   saveNotifications, 
-  resetAllData 
+  resetAllData,
+  getTodayKey 
 } from '@/lib/storage';
 import { soundEffects } from '@/lib/audio';
 import { checkTaskDeadlines, notifyTaskCompleted } from '@/lib/reminders';
 import { triggerTaskDoneConfetti } from '@/lib/confetti';
+import { 
+  ensureDailyTasksForToday, 
+  calculateStreakUpdate, 
+  calculateStreakSummary 
+} from '@/lib/streaks';
 import { usePWA } from '@/hooks/usePWA';
 import { syncManager } from '@/lib/sync';
 
@@ -69,7 +75,12 @@ export default function HomePage() {
 
   useEffect(() => {
     setMounted(true);
-    const loadedTasks = getStoredTasks();
+    const rawTasks = getStoredTasks();
+    const { updatedTasks: loadedTasks, changed: dailyChanged } = ensureDailyTasksForToday(rawTasks);
+    if (dailyChanged) {
+      saveStoredTasks(loadedTasks);
+    }
+
     const loadedSettings = getPomodoroSettings();
     const loadedHistory = getProductivityHistory();
     const loadedNotifications = getNotifications();
@@ -88,7 +99,11 @@ export default function HomePage() {
     });
 
     const unsubData = syncManager.onDataSync((newTasks, newHistory, newSettings) => {
-      setTasks(newTasks);
+      const { updatedTasks: syncedTasks, changed } = ensureDailyTasksForToday(newTasks);
+      if (changed) {
+        saveStoredTasks(syncedTasks);
+      }
+      setTasks(syncedTasks);
       setProductivityHistory(newHistory);
       if (newSettings) {
         setSettings(newSettings);
@@ -120,16 +135,41 @@ export default function HomePage() {
     };
   }, []);
 
-  // Periodic reminder check
+  // Periodic reminder check & day rollover
   useEffect(() => {
-    if (!mounted || tasks.length === 0) return;
+    if (!mounted) return;
+
+    const checkRollover = () => {
+      setTasks((current) => {
+        const { updatedTasks, changed } = ensureDailyTasksForToday(current);
+        if (changed) {
+          saveStoredTasks(updatedTasks);
+          return updatedTasks;
+        }
+        return current;
+      });
+    };
 
     const interval = setInterval(() => {
-      const updatedNotifs = checkTaskDeadlines(tasks, settings.soundEnabled);
-      setNotifications(updatedNotifs);
+      if (tasks.length > 0) {
+        const updatedNotifs = checkTaskDeadlines(tasks, settings.soundEnabled);
+        setNotifications(updatedNotifs);
+      }
+      checkRollover();
     }, 45000);
 
-    return () => clearInterval(interval);
+    const handleFocus = () => {
+      checkRollover();
+    };
+
+    window.addEventListener('focus', handleFocus);
+    document.addEventListener('visibilitychange', handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', handleFocus);
+      document.removeEventListener('visibilitychange', handleFocus);
+    };
   }, [mounted, tasks, settings.soundEnabled]);
 
   const updateTasks = useCallback((newTasks: Task[]) => {
@@ -156,9 +196,16 @@ export default function HomePage() {
             setProductivityHistory(updatedHist);
           }
 
+          const targetStatus = taskData.status || t.status;
+          const streakDiff = calculateStreakUpdate(
+            { ...t, isDaily: taskData.isDaily ?? t.isDaily },
+            targetStatus
+          );
+
           savedTask = {
             ...t,
             ...taskData,
+            ...streakDiff,
             updatedAt: new Date().toISOString(),
             completedAt: isMarkedDone ? new Date().toISOString() : isUnmarkedDone ? null : t.completedAt,
           } as Task;
@@ -171,6 +218,8 @@ export default function HomePage() {
         syncManager.broadcastTaskUpsert(savedTask);
       }
     } else {
+      const isDone = (taskData.status || defaultStatusForNew) === 'done';
+      const isDailyTask = Boolean(taskData.isDaily);
       const newTask: Task = {
         id: `t-${Date.now()}`,
         title: taskData.title || 'Untitled',
@@ -183,9 +232,14 @@ export default function HomePage() {
         subtasks: taskData.subtasks || [],
         estimatedPomodoros: 1,
         completedPomodoros: 0,
+        isDaily: isDailyTask,
+        streak: isDailyTask && isDone ? 1 : 0,
+        bestStreak: isDailyTask && isDone ? 1 : 0,
+        lastCompletedDate: isDailyTask && isDone ? getTodayKey() : undefined,
+        completedDates: isDailyTask && isDone ? [getTodayKey()] : [],
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        completedAt: taskData.status === 'done' ? new Date().toISOString() : null,
+        completedAt: isDone ? new Date().toISOString() : null,
         order: tasks.length,
       };
 
@@ -232,12 +286,15 @@ export default function HomePage() {
       setProductivityHistory(updatedHist);
     }
 
+    const streakDiff = calculateStreakUpdate(target, newStatus);
+
     let modifiedTask: Task | null = null;
     const updated = tasks.map((t) => {
       if (t.id === taskId) {
         modifiedTask = {
           ...t,
           status: newStatus,
+          ...streakDiff,
           updatedAt: new Date().toISOString(),
           completedAt: isMarkedDone
             ? new Date().toISOString()
@@ -315,6 +372,20 @@ export default function HomePage() {
     saveNotifications([]);
   };
 
+  const streakSummary = useMemo(() => {
+    if (!mounted) {
+      return {
+        currentStreak: 0,
+        bestStreak: 0,
+        isMaintainedToday: false,
+        dailyTasksCount: 0,
+        dailyTasksCompletedToday: 0,
+        dailyTasks: [],
+      };
+    }
+    return calculateStreakSummary(tasks, productivityHistory);
+  }, [mounted, tasks, productivityHistory]);
+
   const handleUpdateSettings = (newSettings: PomodoroSettings) => {
     setSettings(newSettings);
     savePomodoroSettings(newSettings);
@@ -362,6 +433,7 @@ export default function HomePage() {
         isNotificationCenterOpen={isNotificationCenterOpen}
         onOpenSyncModal={() => setIsSyncModalOpen(true)}
         syncStatus={syncStatus}
+        streakSummary={streakSummary}
       />
 
       <NotificationCenter
@@ -414,6 +486,12 @@ export default function HomePage() {
           <ProductivityDashboard
             tasks={tasks}
             history={productivityHistory}
+            onStatusChange={handleStatusChange}
+            onOpenNewTaskModal={() => {
+              setTaskToEdit(null);
+              setDefaultStatusForNew('todo');
+              setIsTaskModalOpen(true);
+            }}
           />
         )}
 

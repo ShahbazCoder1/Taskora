@@ -24,6 +24,11 @@ export interface Task {
   updatedAt?: string;
   completedAt?: string | null;
   order: number;
+  isDaily?: boolean;
+  streak?: number;
+  bestStreak?: number;
+  lastCompletedDate?: string;
+  completedDates?: string[];
 }
 
 export type PomodoroMode = 'work' | 'shortBreak' | 'longBreak';

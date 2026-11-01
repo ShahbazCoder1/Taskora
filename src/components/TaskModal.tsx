@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Task, TaskPriority, TaskStatus, Subtask } from '@/types';
-import { X, Plus, Trash2, Calendar, Clock } from 'lucide-react';
+import { X, Plus, Trash2, Calendar, Clock, Flame } from 'lucide-react';
 import { getTodayKey } from '@/lib/storage';
 
 interface TaskModalProps {
@@ -28,6 +28,7 @@ export function TaskModal({
   const [dueTime, setDueTime] = useState('');
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [subtaskInput, setSubtaskInput] = useState('');
+  const [isDaily, setIsDaily] = useState(false);
 
   useEffect(() => {
     if (taskToEdit) {
@@ -38,6 +39,7 @@ export function TaskModal({
       setDueDate(taskToEdit.dueDate || getTodayKey());
       setDueTime(taskToEdit.dueTime || '');
       setSubtasks(taskToEdit.subtasks || []);
+      setIsDaily(Boolean(taskToEdit.isDaily));
     } else {
       setTitle('');
       setDescription('');
@@ -46,6 +48,7 @@ export function TaskModal({
       setDueDate(getTodayKey());
       setDueTime('');
       setSubtasks([]);
+      setIsDaily(false);
     }
   }, [taskToEdit, defaultStatus, isOpen]);
 
@@ -93,6 +96,10 @@ export function TaskModal({
       dueDate,
       dueTime: dueTime || undefined,
       subtasks,
+      isDaily,
+      streak: taskToEdit?.streak || 0,
+      bestStreak: taskToEdit?.bestStreak || 0,
+      lastCompletedDate: taskToEdit?.lastCompletedDate,
     });
     onClose();
   };
@@ -204,6 +211,37 @@ export function TaskModal({
                 className="w-full bg-[#21262d] border border-[#30363d] rounded-md px-3 py-2 text-sm text-slate-200 focus:border-slate-400 transition"
               />
             </div>
+          </div>
+
+          {/* Daily Task / Streak Routine */}
+          <div className="p-3 rounded-lg bg-[#21262d] border border-[#30363d] flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 transition ${isDaily ? 'bg-amber-500/20 text-amber-400' : 'bg-[#161b22] text-slate-400'}`}>
+                <Flame className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <label htmlFor="dailyTaskToggle" className="text-xs font-semibold text-white cursor-pointer">
+                    Daily Recurring Task
+                  </label>
+                  {taskToEdit?.isDaily && (taskToEdit.streak || 0) > 0 && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                      🔥 {taskToEdit.streak} day streak
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Appears in To Do every day and builds your daily completion streak.
+                </p>
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              id="dailyTaskToggle"
+              checked={isDaily}
+              onChange={(e) => setIsDaily(e.target.checked)}
+              className="w-4 h-4 rounded border-slate-600 bg-[#161b22] text-amber-500 focus:ring-0 cursor-pointer shrink-0"
+            />
           </div>
 
           {/* Subtasks */}

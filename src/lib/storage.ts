@@ -19,6 +19,33 @@ export function getTodayKey(): string {
   return formatDateKey(new Date());
 }
 
+/**
+ * Checks whether a task was completed on a specific YYYY-MM-DD date.
+ */
+export function isTaskCompletedOnDate(task: Task, dateKey: string): boolean {
+  if (task.status !== 'done' || !dateKey) return false;
+  if (task.lastCompletedDate === dateKey) return true;
+  if (task.completedAt) {
+    if (task.completedAt.startsWith(dateKey)) return true;
+    try {
+      const d = new Date(task.completedAt);
+      if (!isNaN(d.getTime()) && formatDateKey(d) === dateKey) {
+        return true;
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
+
+/**
+ * Checks whether a task was completed today.
+ */
+export function isTaskCompletedToday(task: Task, todayKey = getTodayKey()): boolean {
+  return isTaskCompletedOnDate(task, todayKey);
+}
+
 const DUMMY_TASK_IDS = new Set(['t-1', 't-2', 't-3']);
 
 const INITIAL_TASKS: Task[] = [];

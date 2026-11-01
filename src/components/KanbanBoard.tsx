@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Task, TaskPriority, TaskStatus, TaskFilters } from '@/types';
 import { TaskCard } from './TaskCard';
 import { Search, Plus, X } from 'lucide-react';
-import { getTodayKey } from '@/lib/storage';
+import { getTodayKey, isTaskCompletedToday } from '@/lib/storage';
 
 interface KanbanBoardProps {
   tasks: Task[];
@@ -35,6 +35,23 @@ export function KanbanBoard({
 
   const [activeDropColumn, setActiveDropColumn] = useState<TaskStatus | null>(null);
   const [mobileActiveColumn, setMobileActiveColumn] = useState<TaskStatus>('todo');
+  const [todayKey, setTodayKey] = useState<string>('');
+
+  useEffect(() => {
+    setTodayKey(getTodayKey());
+
+    const updateDate = () => {
+      const current = getTodayKey();
+      setTodayKey((prev) => (prev !== current ? current : prev));
+    };
+
+    const interval = setInterval(updateDate, 30000);
+    window.addEventListener('focus', updateDate);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', updateDate);
+    };
+  }, []);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const columnRefs = {
@@ -73,9 +90,9 @@ export function KanbanBoard({
   const columnsData = useMemo(() => {
     const todo = filteredTasks.filter((t) => t.status === 'todo');
     const inProgress = filteredTasks.filter((t) => t.status === 'in_progress');
-    const done = filteredTasks.filter((t) => t.status === 'done');
+    const done = filteredTasks.filter((t) => isTaskCompletedToday(t, todayKey));
     return { todo, in_progress: inProgress, done };
-  }, [filteredTasks]);
+  }, [filteredTasks, todayKey]);
 
   const handleDragOver = (e: React.DragEvent, status: TaskStatus) => {
     e.preventDefault();
@@ -95,11 +112,20 @@ export function KanbanBoard({
     if (taskId) onStatusChange(taskId, status);
   };
 
-  const total = tasks.length;
-  const completed = tasks.filter((t) => t.status === 'done').length;
-  const overdue = tasks.filter(
-    (t) => t.status !== 'done' && t.dueDate && t.dueDate < getTodayKey()
-  ).length;
+  const activeBoardCount = useMemo(() => {
+    return tasks.filter((t) => t.status !== 'done' || isTaskCompletedToday(t, todayKey)).length;
+  }, [tasks, todayKey]);
+
+  const completedTodayCount = useMemo(() => {
+    return tasks.filter((t) => isTaskCompletedToday(t, todayKey)).length;
+  }, [tasks, todayKey]);
+
+  const overdue = useMemo(() => {
+    if (!todayKey) return 0;
+    return tasks.filter(
+      (t) => t.status !== 'done' && t.dueDate && t.dueDate < todayKey
+    ).length;
+  }, [tasks, todayKey]);
 
   const columns: { id: TaskStatus; title: string; count: number; tasks: Task[] }[] = [
     { id: 'todo', title: 'To Do', count: columnsData.todo.length, tasks: columnsData.todo },
@@ -161,9 +187,9 @@ export function KanbanBoard({
 
         {/* Quick summary stats */}
         <div className="flex items-center gap-3 text-sm text-slate-300 font-medium">
-          <span>{total} tasks</span>
+          <span>{activeBoardCount} tasks</span>
           <span className="text-slate-600">·</span>
-          <span>{completed} completed</span>
+          <span>{completedTodayCount} completed today</span>
           {overdue > 0 && (
             <>
               <span className="text-slate-600">·</span>
@@ -238,13 +264,21 @@ export function KanbanBoard({
               <div className="p-3 space-y-3 min-h-[400px] max-h-[calc(100vh-230px)] overflow-y-auto">
                 {col.tasks.length === 0 ? (
                   <div className="h-40 flex flex-col items-center justify-center text-center p-4 text-slate-400 text-sm">
-                    <p className="font-medium text-slate-300">No tasks in {col.title}</p>
-                    <button
-                      onClick={() => onOpenNewTaskModal(col.id)}
-                      className="mt-2 text-slate-400 hover:text-white text-xs font-semibold border border-[#30363d] px-3 py-1 rounded bg-[#21262d] transition"
-                    >
-                      + Create Task
-                    </button>
+                    <p className="font-medium text-slate-300">
+                      {col.id === 'done' ? 'No tasks completed today' : `No tasks in ${col.title}`}
+                    </p>
+                    {col.id === 'done' ? (
+                      <p className="text-xs text-slate-500 mt-1">
+                        Completed tasks for today will show here
+                      </p>
+                    ) : (
+                      <button
+                        onClick={() => onOpenNewTaskModal(col.id)}
+                        className="mt-2 text-slate-400 hover:text-white text-xs font-semibold border border-[#30363d] px-3 py-1 rounded bg-[#21262d] transition"
+                      >
+                        + Create Task
+                      </button>
+                    )}
                   </div>
                 ) : (
                   col.tasks.map((task) => (

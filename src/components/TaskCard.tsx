@@ -11,7 +11,8 @@ import {
   Pencil, 
   Trash2, 
   ChevronRight, 
-  ChevronLeft 
+  ChevronLeft,
+  Flame
 } from 'lucide-react';
 import { getTodayKey } from '@/lib/storage';
 
@@ -67,11 +68,17 @@ export function TaskCard({
     >
       {/* Top line: Priority & Quick Actions */}
       <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <span className={`w-2 h-2 rounded-full ${currentPriority.dot}`} />
           <span className={`text-xs font-semibold ${currentPriority.text}`}>
             {currentPriority.label}
           </span>
+          {task.isDaily && (
+            <span className="inline-flex items-center gap-1 text-[11px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300">
+              <Flame className="w-3 h-3 text-amber-400 fill-amber-400" />
+              <span>{(task.streak || 0) > 0 ? `${task.streak}d streak` : 'Daily'}</span>
+            </span>
+          )}
           {task.tags && task.tags.length > 0 && (
             <span className="text-xs text-slate-400 font-medium">
               · #{task.tags[0]}

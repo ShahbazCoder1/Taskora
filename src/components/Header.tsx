@@ -2,7 +2,8 @@
 
 import React from 'react';
 import { ActiveTab, NotificationItem, SyncConnectionStatus } from '@/types';
-import { Kanban, Timer, BarChart2, Settings, Plus, Bell, WifiOff, Wifi } from 'lucide-react';
+import { StreakSummary } from '@/lib/streaks';
+import { Kanban, Timer, BarChart2, Settings, Plus, Bell, WifiOff, Wifi, Flame } from 'lucide-react';
 
 interface HeaderProps {
   activeTab: ActiveTab;
@@ -14,6 +15,7 @@ interface HeaderProps {
   isNotificationCenterOpen: boolean;
   onOpenSyncModal: () => void;
   syncStatus: SyncConnectionStatus;
+  streakSummary?: StreakSummary;
 }
 
 export function Header({
@@ -26,6 +28,7 @@ export function Header({
   isNotificationCenterOpen,
   onOpenSyncModal,
   syncStatus,
+  streakSummary,
 }: HeaderProps) {
   const unreadCount = notifications.filter((n) => !n.read).length;
 
@@ -101,7 +104,42 @@ export function Header({
         </div>
 
         {/* Right Actions */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3">
+          {/* Streak Maintenance Counter */}
+          {streakSummary && (
+            <button
+              onClick={() => setActiveTab('analytics')}
+              className={`flex items-center gap-1.5 px-2 py-1.5 sm:px-2.5 rounded-md text-xs font-semibold border transition cursor-pointer ${
+                streakSummary.isMaintainedToday
+                  ? 'bg-amber-500/10 border-amber-500/40 text-amber-300 hover:bg-amber-500/20 hover:border-amber-400 shadow-xs'
+                  : streakSummary.currentStreak > 0
+                  ? 'bg-[#21262d] border-amber-500/30 text-amber-400 hover:border-amber-400 hover:bg-[#262c36]'
+                  : 'bg-[#21262d] border-[#30363d] text-slate-400 hover:text-slate-200 hover:bg-[#262c36]'
+              }`}
+              title={
+                streakSummary.isMaintainedToday
+                  ? `Daily streak: ${streakSummary.currentStreak} day${streakSummary.currentStreak === 1 ? '' : 's'} (Maintained today!)`
+                  : streakSummary.currentStreak > 0
+                  ? `Daily streak: ${streakSummary.currentStreak} day${streakSummary.currentStreak === 1 ? '' : 's'} (Complete a daily task to maintain)`
+                  : 'Daily streak: 0 days (Complete a daily task to start)'
+              }
+            >
+              <Flame
+                className={`w-3.5 h-3.5 ${
+                  streakSummary.currentStreak > 0
+                    ? 'text-amber-400 fill-amber-400 animate-pulse'
+                    : 'text-slate-500'
+                }`}
+              />
+              <span className="font-bold text-xs">
+                {streakSummary.currentStreak}
+              </span>
+              <span className="hidden sm:inline text-[11px] font-medium text-slate-400">
+                {streakSummary.currentStreak === 1 ? 'day' : 'days'}
+              </span>
+            </button>
+          )}
+
           {/* Offline Indicator */}
           {isOffline && (
             <div className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#21262d] border border-[#30363d] text-xs text-amber-400">
